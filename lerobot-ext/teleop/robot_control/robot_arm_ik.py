@@ -9,6 +9,8 @@ import os
 import sys
 import pickle
 import logging_mp
+import os
+_ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets")   # lerobot-ext/assets
 logger_mp = logging_mp.getLogger(__name__)
 
 
@@ -61,11 +63,11 @@ class G1_29_ArmIK:
         self.cache_path = _nome_cache("g1_29_model_cache")
 
         if not self.Unit_Test:
-            self.urdf_path = '../assets/g1/g1_body29_hand14.urdf'
-            self.model_dir = '../assets/g1/'
+            self.urdf_path = os.path.join(_ASSETS, "g1/g1_body29_hand14.urdf")
+            self.model_dir = os.path.join(_ASSETS, "g1/")
         else:
-            self.urdf_path = '../../assets/g1/g1_body29_hand14.urdf'
-            self.model_dir = '../../assets/g1/'
+            self.urdf_path = os.path.join(_ASSETS, "g1/g1_body29_hand14.urdf")
+            self.model_dir = os.path.join(_ASSETS, "g1/")
 
         # Try loading cache first
         _cache = _carregar_cache_se_valido(self, "G1_29_ArmIK")
@@ -355,11 +357,11 @@ class G1_23_ArmIK:
         self.cache_path = _nome_cache("g1_23_model_cache")
 
         if not self.Unit_Test:
-            self.urdf_path = '../assets/g1/g1_body23.urdf'
-            self.model_dir = '../assets/g1/'
+            self.urdf_path = os.path.join(_ASSETS, "g1/g1_body23.urdf")
+            self.model_dir = os.path.join(_ASSETS, "g1/")
         else:
-            self.urdf_path = '../../assets/g1/g1_body23.urdf'
-            self.model_dir = '../../assets/g1/'
+            self.urdf_path = os.path.join(_ASSETS, "g1/g1_body23.urdf")
+            self.model_dir = os.path.join(_ASSETS, "g1/")
 
         # Try loading cache first
         _cache = _carregar_cache_se_valido(self, "G1_23_ArmIK")
@@ -635,11 +637,11 @@ class H1_2_ArmIK:
         self.cache_path = _nome_cache("h1_2_model_cache")
 
         if not self.Unit_Test:
-            self.urdf_path = '../assets/h1_2/h1_2.urdf'
-            self.model_dir = '../assets/h1_2/'
+            self.urdf_path = os.path.join(_ASSETS, "h1_2/h1_2.urdf")
+            self.model_dir = os.path.join(_ASSETS, "h1_2/")
         else:
-            self.urdf_path = '../../assets/h1_2/h1_2.urdf'
-            self.model_dir = '../../assets/h1_2/'
+            self.urdf_path = os.path.join(_ASSETS, "h1_2/h1_2.urdf")
+            self.model_dir = os.path.join(_ASSETS, "h1_2/")
 
         # Try loading cache first
         _cache = _carregar_cache_se_valido(self, "H1_2_ArmIK")
@@ -938,11 +940,11 @@ class H1_ArmIK:
         self.cache_path = _nome_cache("h1_model_cache")
 
         if not self.Unit_Test:
-            self.urdf_path = '../assets/h1/h1_with_hand.urdf'
-            self.model_dir = '../assets/h1/'
+            self.urdf_path = os.path.join(_ASSETS, "h1/h1_with_hand.urdf")
+            self.model_dir = os.path.join(_ASSETS, "h1/")
         else:
-            self.urdf_path = '../../assets/h1/h1_with_hand.urdf'
-            self.model_dir = '../../assets/h1/'
+            self.urdf_path = os.path.join(_ASSETS, "h1/h1_with_hand.urdf")
+            self.model_dir = os.path.join(_ASSETS, "h1/")
 
         # Try loading cache first
         _cache = _carregar_cache_se_valido(self, "H1_ArmIK")
