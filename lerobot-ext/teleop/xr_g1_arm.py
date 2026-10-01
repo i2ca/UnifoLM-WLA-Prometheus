@@ -5,7 +5,7 @@ import cv2
 import threading
 import logging
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from lerobot.teleoperators.teleoperator import Teleoperator
@@ -187,6 +187,12 @@ class XRG1ArmConfig(TeleoperatorConfig):
     # head_stereo_left / head_stereo_right, 640x480 cada), um em cada olho: visão em 3D.
     # false → uma tela só, com `head_cam_keys[0]` (ou head_camera, se existir).
     stereo_head: bool = False
+
+    # ── JUNTAS FIXAS NA IK (01/10) ────────────────────────────────────────
+    # {nome da junta no URDF: ângulo em rad}. Para junta com defeito/bloqueada: a IK não a usa e a
+    # mantém nesse ângulo (ex.: {"left_wrist_pitch_joint": 0.33} com o pitch do punho esquerdo calçado —
+    # sem isso o yaw do punho ficava pulando). Leia o ângulo no painel :8095 com o robô parado.
+    juntas_fixas: dict = field(default_factory=dict)
     head_cam_keys: tuple = ("head_stereo_left", "head_stereo_right")
 
     # ── TRONCO SEGUE A CABEÇA (30/09) ─────────────────────────────────────
@@ -553,7 +559,7 @@ class XRG1Arm(Teleoperator):
         
         # 2. Inicia o Solver de Cinemática Inversa dos braços
         logger.info("Carregando URDF e IK do Braço G1_29...")
-        self.arm_ik = G1_29_ArmIK()
+        self.arm_ik = G1_29_ArmIK(juntas_fixas=self.config.juntas_fixas)
 
         # 3. Inicia o Retargeting Das Mãos
         if self.config.ee_type == "dex3":

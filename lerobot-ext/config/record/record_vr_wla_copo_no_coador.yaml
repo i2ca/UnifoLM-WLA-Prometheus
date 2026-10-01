@@ -46,6 +46,10 @@ teleop:
   show_hud: true
 
   stereo_head: false   # 3D ficou ruim (30/09): tela 2D com o olho esquerdo da ZED
+  # pitch do punho ESQUERDO com a peça danificada e calçado (01/10): a IK não usa essa junta e a mantém
+  # neste ângulo (sem isso o yaw do punho ficava pulando). Confira o ângulo no painel :8095; tire a linha
+  # quando o punho for consertado.
+  juntas_fixas: {left_wrist_pitch_joint: 0.33}
   head_cam_keys: ["head_stereo_left", "head_stereo_right"]
 
   torso_follows_head: true

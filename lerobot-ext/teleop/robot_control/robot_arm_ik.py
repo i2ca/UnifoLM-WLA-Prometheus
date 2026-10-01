@@ -53,7 +53,7 @@ sys.path.append(parent2_dir)
 from teleop.utils.weighted_moving_filter import WeightedMovingFilter
 
 class G1_29_ArmIK:
-    def __init__(self, Unit_Test = False, Visualization = False):
+    def __init__(self, Unit_Test = False, Visualization = False, juntas_fixas=None):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
         self.Unit_Test = Unit_Test
@@ -174,6 +174,21 @@ class G1_29_ArmIK:
                 )
             ],
         )
+
+        # JUNTAS FIXAS (01/10): junta com defeito/bloqueada (ex.: pitch do punho esquerdo com a peça danificada e
+        # um calço) — a IK a trata como fixa no ângulo dado (limite inferior = superior) e resolve com as outras.
+        # Sem isso a IK seguia pedindo aquela junta, ela não ia, e o yaw do punho ficava pulando entre soluções.
+        self.juntas_fixas = dict(juntas_fixas or {})
+        for nome, valor in self.juntas_fixas.items():
+            if not self.reduced_robot.model.existJointName(nome):
+                raise ValueError(f"juntas_fixas: '{nome}' não é junta do braço na IK")
+            iq = self.reduced_robot.model.joints[self.reduced_robot.model.getJointId(nome)].idx_q
+            lo = self.reduced_robot.model.lowerPositionLimit.copy()
+            hi = self.reduced_robot.model.upperPositionLimit.copy()
+            lo[iq], hi[iq] = float(valor) - 1e-4, float(valor) + 1e-4
+            self.reduced_robot.model.lowerPositionLimit = lo
+            self.reduced_robot.model.upperPositionLimit = hi
+            logger_mp.info(f"[G1_29_ArmIK] junta FIXA na IK: {nome} = {float(valor):+.3f} rad")
 
         # Defining the optimization problem
         self.opti = casadi.Opti()
