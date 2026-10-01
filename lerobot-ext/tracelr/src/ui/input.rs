@@ -14,6 +14,7 @@ impl App {
 
         let mut g_pressed = false;
         let mut t_pressed = false;
+        let mut c_pressed = false;
         let mut enter_pressed = false;
         let mut escape_pressed = false;
         let mut space_pressed = false;
@@ -23,6 +24,7 @@ impl App {
         ctx.input(|i| {
             g_pressed = i.key_pressed(egui::Key::G);
             t_pressed = i.key_pressed(egui::Key::T);
+            c_pressed = i.key_pressed(egui::Key::C) && !i.modifiers.command;
             enter_pressed = i.key_pressed(egui::Key::Enter);
             escape_pressed = i.key_pressed(egui::Key::Escape);
             space_pressed = i.key_pressed(egui::Key::Space);
@@ -51,6 +53,12 @@ impl App {
                 }
             }
         });
+
+        // C cycles the camera (head -> wrists -> ...)
+        if c_pressed {
+            self.proxima_camera(ctx);
+            return;
+        }
 
         // G toggles grid view
         if g_pressed {

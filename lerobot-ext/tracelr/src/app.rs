@@ -23,6 +23,8 @@ pub struct App {
     // Viewer state
     pub(crate) current_episode: usize,
     pub(crate) current_video_key_index: usize,
+    /// --camera: parte do nome da câmera principal (ex.: head_stereo_left, wrist_right)
+    pub(crate) camera_preferida: Option<String>,
     pub(crate) current_texture: Option<egui::TextureHandle>,
     pub(crate) video_paths: Vec<PathBuf>,
     pub(crate) seek_ranges: Vec<Option<(f64, f64)>>,
@@ -74,7 +76,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(_cc: &eframe::CreationContext, initial_path: Option<PathBuf>, annotate: bool, urdf_override: Option<PathBuf>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext, initial_path: Option<PathBuf>, annotate: bool, urdf_override: Option<PathBuf>, camera: Option<String>) -> Self {
         let annotations = if annotate {
             AnnotationState::load_prompts(initial_path.as_deref())
         } else {
@@ -85,6 +87,7 @@ impl App {
             annotations,
             current_episode: 0,
             current_video_key_index: 0,
+            camera_preferida: None,
             current_texture: None,
             video_paths: Vec::new(),
             seek_ranges: Vec::new(),
@@ -118,6 +121,7 @@ impl App {
             show_cache_overlay: false,
         };
 
+        app.camera_preferida = camera;
         if let Some(path) = initial_path {
             app.load_dataset(&path);
             if app.dataset.is_some() {
@@ -133,28 +137,19 @@ impl App {
         match LeRobotDataset::load(path) {
             Ok(ds) => {
                 log::info!("Dataset loaded: {} episodes", ds.episodes.len());
-                let wrist_idx = ds
-                    .info
-                    .video_keys
-                    .iter()
-                    .position(|k| k.contains("wrist"))
+                // Câmera principal: a de --camera, senão a da CABEÇA (head_stereo_left / head / high), senão a 1ª.
+                // (Antes era a primeira "wrist" — no G1 do Prometheus caía na D435 do punho esquerdo.)
+                let chaves = &ds.info.video_keys;
+                let achar = |s: &str| chaves.iter().position(|k| k.contains(s));
+                self.current_video_key_index = self
+                    .camera_preferida
+                    .as_deref()
+                    .and_then(|c| achar(c))
+                    .or_else(|| achar("head_stereo_left"))
+                    .or_else(|| achar("head"))
+                    .or_else(|| achar("high"))
                     .unwrap_or(0);
-                self.current_video_key_index = wrist_idx;
-
-                let video_key = ds.info.video_keys.get(wrist_idx).cloned().unwrap_or_default();
-                self.video_paths = ds
-                    .episodes
-                    .iter()
-                    .map(|ep| ds.video_path(ep.episode_index, &video_key))
-                    .collect();
-                self.seek_ranges = ds
-                    .episodes
-                    .iter()
-                    .map(|ep| {
-                        let (from, to) = ds.episode_time_range(ep.episode_index, &video_key);
-                        if to > from { Some((from, to)) } else { None }
-                    })
-                    .collect();
+                Self::caminhos_da_camera(&ds, self.current_video_key_index, &mut self.video_paths, &mut self.seek_ranges);
 
                 // Try to load robot kinematics for EE trajectory visualization
                 self.robot_kinematics = None;
@@ -201,6 +196,47 @@ impl App {
                 log::error!("Failed to load dataset: {}", e);
                 self.loading_error = Some(e);
             }
+        }
+    }
+
+    /// Vídeo e trecho de cada episódio para a câmera `idx`.
+    pub(crate) fn caminhos_da_camera(ds: &LeRobotDataset, idx: usize, paths: &mut Vec<PathBuf>, ranges: &mut Vec<Option<(f64, f64)>>) {
+        let video_key = ds.info.video_keys.get(idx).cloned().unwrap_or_default();
+        *paths = ds.episodes.iter().map(|ep| ds.video_path(ep.episode_index, &video_key)).collect();
+        *ranges = ds
+            .episodes
+            .iter()
+            .map(|ep| {
+                let (from, to) = ds.episode_time_range(ep.episode_index, &video_key);
+                if to > from { Some((from, to)) } else { None }
+            })
+            .collect();
+    }
+
+    /// Tecla C: passa para a próxima câmera (cabeça -> punhos -> ...), mantendo o episódio e o modo.
+    pub(crate) fn proxima_camera(&mut self, ctx: &egui::Context) {
+        let n = match &self.dataset { Some(ds) => ds.info.video_keys.len(), None => return };
+        if n < 2 {
+            return;
+        }
+        self.current_video_key_index = (self.current_video_key_index + 1) % n;
+        if let Some(ds) = &self.dataset {
+            Self::caminhos_da_camera(ds, self.current_video_key_index, &mut self.video_paths, &mut self.seek_ranges);
+            log::info!("Câmera: {}", ds.info.video_keys[self.current_video_key_index]);
+        }
+        let em_video = self.viewing_video;
+        let em_grade = self.grid_view.is_some();
+        self.player = None;
+        self.viewing_video = false;
+        self.playing = false;
+        self.current_texture = None;
+        self.decode_cache = DecodeLruCache::new(LRU_CAPACITY);
+        self.init_cache(ctx);
+        if em_grade {
+            self.toggle_grid_view(ctx);
+            self.toggle_grid_view(ctx);
+        } else if em_video {
+            self.enter_video_mode(ctx);
         }
     }
 

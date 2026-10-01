@@ -30,6 +30,11 @@ struct Args {
     /// Path to robot URDF file for trajectory visualization
     #[arg(long)]
     urdf: Option<PathBuf>,
+
+    /// Main camera (part of the video key, e.g. head_stereo_left, wrist_right). Default: the head camera.
+    /// Press C to cycle cameras.
+    #[arg(long)]
+    camera: Option<String>,
 }
 
 fn main() -> eframe::Result {
@@ -47,6 +52,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "tracelr",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, args.path, args.annotate, args.urdf)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, args.path, args.annotate, args.urdf, args.camera)))),
     )
 }

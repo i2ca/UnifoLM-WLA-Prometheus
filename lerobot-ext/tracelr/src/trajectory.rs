@@ -399,3 +399,32 @@ mod testes_g1 {
         }
     }
 }
+
+#[cfg(test)]
+mod teste_dataset_g1 {
+    use super::*;
+
+    /// TRACELR_DATASET=<dataset LeRobot do G1> cargo test dataset_g1_duas_maos -- --nocapture
+    #[test]
+    fn dataset_g1_duas_maos() {
+        let Ok(raiz) = std::env::var("TRACELR_DATASET") else { return };
+        let ds = crate::dataset::LeRobotDataset::load(Path::new(&raiz)).unwrap();
+        let urdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/g1/g1_body29_hand14.urdf");
+        let kin = RobotKinematics::from_urdf_with_state(&urdf, None, &ds.info.state_names).unwrap();
+        let v3 = ds.info.codebase_version.starts_with("v3");
+        let p = episode_data_path(&ds.root, 0, ds.info.chunks_size, &ds.info.codebase_version);
+        let st = load_episode_states(&p, if v3 { Some(0) } else { None }).unwrap();
+        let tr = kin.compute_trajectory(&st, &[]);
+        let mut todas = vec![tr.positions.clone()];
+        todas.extend(tr.extra.clone());
+        for (nome, pos) in kin.ee_names().iter().zip(&todas) {
+            let (a, b) = (pos.first().unwrap(), pos.last().unwrap());
+            let mut lo = [f64::MAX; 3];
+            let mut hi = [f64::MIN; 3];
+            for q in pos { for i in 0..3 { lo[i] = lo[i].min(q[i]); hi[i] = hi[i].max(q[i]); } }
+            println!("{nome}: {} quadros | início {:.3?} fim {:.3?} | amplitude cm [{:.1}, {:.1}, {:.1}]",
+                pos.len(), a, b, (hi[0]-lo[0])*100.0, (hi[1]-lo[1])*100.0, (hi[2]-lo[2])*100.0);
+        }
+        assert_eq!(todas.len(), 2);
+    }
+}

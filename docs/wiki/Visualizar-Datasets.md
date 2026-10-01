@@ -31,6 +31,16 @@ cd lerobot-ext && python viz_episodios.py --root meu_dataset/maca_x_preto_2026-0
 cd lerobot-ext/tracelr && bash ver_dataset.sh ../meu_dataset/copo_branco_2026-10-01
 ```
 
+| Tecla | Faz |
+|---|---|
+| ← / → | troca de episódio |
+| Espaço | toca / pausa |
+| **C** | troca de câmera (abre na da **cabeça**; depois os punhos) |
+| **T** | trajetória 3D das duas mãos, com legenda |
+| **G** | grade com vários episódios |
+
+Para abrir direto em outra câmera, use `--camera wrist_right`.
+
 O `ver_dataset.sh` já passa o URDF do G1 e contorna o erro de compilação do FFmpeg
 (`'limits.h' file not found`) com `BINDGEN_EXTRA_CLANG_ARGS`.
 

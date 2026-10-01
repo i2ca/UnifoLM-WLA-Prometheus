@@ -306,6 +306,22 @@ pub(crate) fn show_trajectory_overlay(
         }
     }
 
+    // --- Legenda das mãos (G1: direita = cor do tema, esquerda = azul) ---
+    let mut vistos: Vec<(String, egui::Color32)> = Vec::new();
+    for e in entries {
+        if let Some(l) = &e.label {
+            if !vistos.iter().any(|(n, _)| n == l) {
+                vistos.push((l.clone(), e.color.unwrap_or(accent_color)));
+            }
+        }
+    }
+    for (k, (nome, cor)) in vistos.iter().enumerate() {
+        let y = rect.max.y - 8.0 - 14.0 * (vistos.len() - 1 - k) as f32;
+        painter.circle_filled(egui::pos2(rect.min.x + 10.0, y - 5.0), 4.0, *cor);
+        painter.text(egui::pos2(rect.min.x + 18.0, y), egui::Align2::LEFT_BOTTOM, nome,
+                     egui::FontId::monospace(11.0), *cor);
+    }
+
     // --- Global labels ---
     let span_text = format!(
         "dx={:.0}mm dy={:.0}mm dz={:.0}mm",
