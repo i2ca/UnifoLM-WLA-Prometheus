@@ -36,11 +36,17 @@ O `ver_dataset.sh` já passa o URDF do G1 e contorna o erro de compilação do F
 
 ## Exemplos
 
-Os datasets são grandes demais para o git: a maçã tem 422 MB e 50 episódios. Eles ficam no Hugging Face Hub
-(organização do laboratório) e no `/data` da Athena. Para baixar:
+Os datasets são grandes demais para o git e ficam no Hugging Face Hub (público) e no `/data` da Athena:
+
+| Dataset | Episódios | Frase |
+|---|---|---|
+| [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30) | 50 (27 569 quadros, 422 MB) | Pick up the apple and place it on the black X. |
+
+Para baixar:
 
 ```bash
-huggingface-cli download <org>/maca_x_preto_2026-09-30 --repo-type dataset --local-dir lerobot-ext/meu_dataset/maca_x_preto_2026-09-30
+huggingface-cli download Mrwlker/maca_x_preto_2026-09-30 --repo-type dataset --local-dir lerobot-ext/meu_dataset/maca_x_preto_2026-09-30
+cd lerobot-ext/tracelr && bash ver_dataset.sh ../meu_dataset/maca_x_preto_2026-09-30
 ```
 
 As rodadas do robô real (`~/wla_real_runs/<data>`) guardam, a cada consulta ao modelo:

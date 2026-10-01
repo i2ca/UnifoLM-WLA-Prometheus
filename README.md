@@ -53,6 +53,10 @@ git clone --recursive https://github.com/i2ca/UnifoLM-WLA-Prometheus ~/DEV/Unifo
 Antes de tudo, leia as [lições aprendidas](docs/wiki/Licoes-Aprendidas.md): metade dos problemas que
 tivemos está lá, com a causa e a correção.
 
+## Datasets
+
+- [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30): 50 episódios de "Pick up the apple and place it on the black X." (G1 + Dex3, ZED + 2 D435).
+
 ## Créditos e licenças
 
 - **UnifoLM-WLA** e **UnifoLM-ER-1**: Unitree Robotics ([unifolm-wla](https://github.com/unitreerobotics/unifolm-wla), Apache-2.0).
