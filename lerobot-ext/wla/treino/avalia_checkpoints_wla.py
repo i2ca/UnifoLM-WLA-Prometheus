@@ -81,6 +81,7 @@ def main():
         H = m.action_horizon
         erros = {p: [] for p in PARTES}
         tot, dedos, fecha = [], [], []
+        por_tarefa = {}   # frase -> (lista de mse por amostra, lista de acerto aberto/fechado da mão direita)
         for i, b in enumerate(lotes):
             torch.manual_seed(1000 + i)   # mesmo ruído inicial do fluxo para todos os checkpoints
             with torch.no_grad():
@@ -98,13 +99,21 @@ def main():
             fa = (alvo[:, :, SLICES["right_fig6d"]] + 1) / 2
             dedos.append(np.abs(fp - fa).mean())
             fecha.append(((fp.mean(-1) > 0.5) == (fa.mean(-1) > 0.5)).mean())
+            for j, frase in enumerate(b.get("task", [None] * len(pred))):
+                mj = mask[j]
+                e = por_tarefa.setdefault(frase, ([], []))
+                e[0].append(float(d2[j][mj].mean()))
+                e[1].append(float(((fp[j].mean(-1) > 0.5) == (fa[j].mean(-1) > 0.5)).mean()))
         r = {"mse_total": float(np.mean(tot)), "dedos_dir_mae": float(np.mean(dedos)),
              "fecha_dir_acerto_%": float(100 * np.mean(fecha)),
              **{f"mse_{p}": float(np.mean(v)) for p, v in erros.items() if v}}
+        for frase, (ms, ac) in sorted(por_tarefa.items(), key=lambda x: str(x[0])):
+            r[f"tarefa: {frase}"] = {"amostras": len(ms), "mse_total": float(np.mean(ms)),
+                                     "fecha_dir_acerto_%": float(100 * np.mean(ac))}
         resultados[passo] = r
         print(f"\n=== passo {passo} ===", flush=True)
         for k, v in r.items():
-            print(f"  {k:24s} {v:.4f}", flush=True)
+            print(f"  {k:24s} {v:.4f}" if not isinstance(v, dict) else f"  {k}: {v}", flush=True)
         del m
         torch.cuda.empty_cache()
     json.dump(resultados, open(run / "avaliacao_checkpoints.json", "w"), indent=1)

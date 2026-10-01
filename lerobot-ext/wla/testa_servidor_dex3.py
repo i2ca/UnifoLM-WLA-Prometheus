@@ -30,10 +30,12 @@ def main():
     ap.add_argument("--imgs", required=True, help="pasta com cabeca.jpg, punho_esq.jpg, punho_dir.jpg (640x480)")
     ap.add_argument("--tarefa", default="Pick up the apple and place it on the black X.")
     ap.add_argument("--n", type=int, default=3)
+    ap.add_argument("--pose", default="maca", help="pose de partida do estado (maca, gravacao, inicial...)")
     a = ap.parse_args()
 
     pose = json.load(open(AQUI / "pose_partida_dex1.json"))
-    q = np.array(pose["pernas_maca"] + pose["cintura_maca"] + pose["left_maca"] + pose["right_maca"])
+    s = "_" + a.pose
+    q = np.array(pose["pernas_maca"] + pose.get("cintura" + s, pose["cintura"]) + pose["left" + s] + pose["right" + s])
     fk = FK()
     ee = {l: fk.ee9(q, l) for l in ("left", "right")}
     im = {n: cv2.imread(str(Path(a.imgs) / f"{n}.jpg")) for n in ("cabeca", "punho_esq", "punho_dir")}
