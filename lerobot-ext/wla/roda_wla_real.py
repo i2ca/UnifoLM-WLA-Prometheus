@@ -200,7 +200,7 @@ def main():
     ap.add_argument("--servidor", default="ws://127.0.0.1:8600",
                     help="servidor oficial do WLA já carregado (sobe_wla_servidor.sh); 'processo' = carrega aqui")
     ap.add_argument("--sem-pose-inicial", action="store_true", help="começa da pose atual (fora da distribuição)")
-    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao"], default="inicial",
+    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao", "gravacao_aberta"], default="inicial",
                     help="inicial = coluna reta e mãos afastadas (~49 cm, 30/09); elevada = a do dataset com o "
                          "ombro 0,35 rad mais alto e tronco 10° à frente; dataset = a mediana do início dos episódios Dex1; maca = a do início dos 50 episódios do nosso dataset da maçã (use com o modelo afinado); gravacao = braços abertos fora da cena (a do botão do painel, 01/10 — use com modelos treinados com episódios que começam nela)")
     ap.add_argument("--cintura-reta", action="store_true",
@@ -322,7 +322,7 @@ def main():
     alvo = {i: float(inicio[i]) for i in list(CINTURA) + list(BRACOS)}
     q_ini = inicio.copy()
     if not a.sem_pose_inicial:
-        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao"}[a.pose]
+        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao", "gravacao_aberta": "_gravacao_aberta"}[a.pose]
         q_ini[BRACO["left"]] = POSE_JUNTAS["left" + suf]
         q_ini[BRACO["right"]] = POSE_JUNTAS["right" + suf]
         if not a.cintura_reta:
