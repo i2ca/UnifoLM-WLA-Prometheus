@@ -53,9 +53,19 @@ git clone --recursive https://github.com/i2ca/UnifoLM-WLA-Prometheus ~/DEV/Unifo
 Antes de tudo, leia as [lições aprendidas](docs/wiki/Licoes-Aprendidas.md): metade dos problemas que
 tivemos está lá, com a causa e a correção.
 
-## Datasets
+## Datasets (Hugging Face, públicos)
 
-- [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30): 50 episódios de "Pick up the apple and place it on the black X." (G1 + Dex3, ZED + 2 D435).
+Gravados por teleoperação VR no G1 + Dex3, com a ZED na cabeça e duas D435 nos punhos (640x480, 30 fps),
+em formato LeRobot v3.0.
+
+| Dataset | Tarefa (frase) | Episódios | Quadros |
+|---|---|---|---|
+| [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30) | Pick up the apple and place it on the black X. | 50 | 27 569 |
+| [Mrwlker/copo_branco_2026-10-01](https://huggingface.co/datasets/Mrwlker/copo_branco_2026-10-01) | Pick up the white mug. | 47 | 9 533 |
+
+```bash
+huggingface-cli download Mrwlker/copo_branco_2026-10-01 --repo-type dataset --local-dir lerobot-ext/meu_dataset/copo_branco_2026-10-01
+```
 
 ## Créditos e licenças
 
