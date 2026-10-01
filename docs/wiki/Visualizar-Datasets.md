@@ -52,6 +52,7 @@ Os datasets são grandes demais para o git e ficam no Hugging Face Hub (público
 |---|---|---|
 | [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30) | 50 (27 569 quadros, 422 MB) | Pick up the apple and place it on the black X. |
 | [Mrwlker/copo_branco_2026-10-01](https://huggingface.co/datasets/Mrwlker/copo_branco_2026-10-01) | 47 (9 533 quadros, 97 MB) | Pick up the white mug. |
+| [Mrwlker/copo_no_coador_2026-10-01](https://huggingface.co/datasets/Mrwlker/copo_no_coador_2026-10-01) | 50 (15 531 quadros, 160 MB) | Place the white mug under the coffee strainer. |
 
 Para baixar:
 
