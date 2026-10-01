@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+# certificados do VR (gerados localmente; ver wiki Teleop)
+*.pem
+*.key
+# dados e modelos: grandes demais para o git (ver wiki Datasets / Treino)
+meu_dataset/
+lerobot-ext/meu_dataset/
+playground/
+*.safetensors
+wla_real_runs/
+outputs/
+wandb/
+# build do tracelr
+lerobot-ext/tracelr/target/
+MUJOCO_LOG.TXT
+*.log

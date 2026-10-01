@@ -1,0 +1,144 @@
+<mujoco model="G1 Dex3 - cena do cafe com a maca (UnifoLM-WLA)">
+  <!-- Cena do sim_cafe_wla.py. Abra no VS Code com a extensão MuJoCo Viewer para ver ao vivo.
+       As câmeras (ZED da cabeça e D435 dos punhos) ficam no g1_29dof_with_hand_wla.xml ("EDITE AQUI"). -->
+  <include file="g1_29dof_with_hand_wla.xml"/>
+  <statistic center="0 0 0.5" extent="2.0"/>
+
+  <visual>
+    <headlight diffuse="0.35 0.35 0.35" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-130" elevation="-20" offwidth="848" offheight="480"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.62 0.62 0.60" rgb2="0.56 0.56 0.55"
+      markrgb="0.45 0.45 0.45" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.05"/>
+    
+    <mesh name="mesh_copo" file="../copo_texturizado.obj" scale="1 1 1" />
+    <mesh name="chaleira" file="../chaleira.obj" scale="0.2 0.2 0.2" />
+    <!-- Coador convertido de `~/Downloads/coador.glb`.
+         GLB é Y-up e MuJoCo é Z-up: rotação de +90° em X (o -90° da primeira
+         tentativa deixou de cabeça para baixo) mais 180° em Z para acertar o
+         yaw. Base assentada em z=0 para o mocap pousá-la no tampo.
+         Escala 0.195 (150% da primeira tentativa, que era 0.13) → 19,5 cm de
+         altura por 10,7 cm de largura. O 0.26 saía do enquadramento da
+         `head_camera`.
+         O `include_texture` do trimesh é o que preserva os `vt` no OBJ; sem
+         eles o MuJoCo carrega a malha e IGNORA a textura em silêncio, e o
+         objeto sai da cor chapada do `rgba` do geom. -->
+    <mesh name="mesh_coador" file="../coador.obj" scale="0.195 0.195 0.195" />
+    <texture name="tex_coador" type="2d" file="coador_textura.png"/>
+    <material name="mat_coador" texture="tex_coador" specular="0.3" shininess="0.3"/>
+  </asset>
+
+<worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" diffuse="0.45 0.45 0.45"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- MESA = a caixa de papelão do dataset: tampo em z 0,683 (11 cm abaixo da pelvis, que fica em 0,793) -->
+    <body name="mesa" pos="0.47 0 0.663">
+      <geom name="geometria_mesa" type="box" size="0.22 0.40 0.02" rgba="0.70 0.56 0.38 1" friction="1 0.005 0.0001"/>
+
+      <!-- <body name="corpo_botao" pos="0 0.3 0.02">
+        <joint name="junta_botao" type="slide" axis="0 0 1" range="-0.015 0" springref="0" stiffness="100" damping="5"/>
+        <geom name="geometria_botao" type="cylinder" size="0.03 0.02" rgba="0 1 0 1" mass="0.01" friction="1 0.005 0.0001"/>
+      </body> -->
+    </body>
+
+    <!-- x=0.45 e não 0.15: esta é a posição que o cliente de inferência ao vivo
+         usa, porque só o `gerar_dataset_mujoco.py` sobrescreve a pose da xícara
+         (via `sorteia_copo`) — o cliente não mexe nela e herda o que está aqui.
+         Com x=0.15 a xícara assentava na beirada da mesa, 30 cm mais perto do
+         robô do que QUALQUER um dos 422 episódios de treino (x entre 0.40 e
+         0.50), e o `sorteia_copo` documenta que abaixo de 0.40 o cotovelo bate
+         no tronco e não existe pose que alcance. O modelo recebia uma cena fora
+         da distribuição e um alvo inalcançável. z=0.948 é o repouso sobre o
+         tampo (0.900 + meio copo 0.048). -->
+    <body name="objeto_customizado" pos="0.61 0.24 0.731">
+      <freejoint name="junta_livre_bloco"/>
+
+      <geom name="visual_copo" type="mesh" mesh="mesh_copo" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" euler="1.5708 -1.5708 0" pos="0.00 0.013 -0.045"/>
+
+      <geom name="colisao_copo" type="cylinder" size="0.039 0.048" rgba="0 0 0 0" mass="0.1" 
+            condim="4" 
+            friction="1 0.1 0.005" 
+            solimp="0.99 0.99 0.01" 
+            solref="0.01 1"/>
+    </body>
+    
+    <!-- Marcador de destino: o "X" na mesa. -->
+    <!-- É um body MOCAP, e não um desenho no `viewer.user_scn`, porque o
+         `user_scn` é camada de decoração da JANELA: os renderizadores
+         offscreen chamam `update_scene`, que remonta a cena a partir do
+         MODELO, e nada do `user_scn` entra ali. Com o X só na janela, os
+         vídeos gravados não tinham marcador nenhum, e o alvo é sorteado por
+         episódio (±Y) — o dataset ficava ambíguo: mesma imagem, ações
+         opostas. Como mocap ele aparece em TODA câmera.
+         `contype`/`conaffinity` zerados: é marcação pintada na mesa, não
+         obstáculo. Se colidisse, entraria no `bateu_na_mesa()` e derrubaria
+         justamente os episódios que pousam em cima dele. -->
+    <body name="marca_alvo" mocap="true" pos="0.61 -0.26 0.685">
+      <!-- Era um X de duas barras cruzadas; agora é o coador. O body segue
+           MOCAP e sem colisão pelos mesmos motivos de antes: quem o posiciona é
+           o `desenha_alvo` via `d.mocap_pos`, e com colisão ele entraria no
+           `bateu_na_mesa()` e derrubaria justamente os episódios que pousam a
+           xícara em cima dele. Consequência de não colidir: a xícara ATRAVESSA
+           o coador visualmente ao ser pousada, em vez de encostar nele. -->
+      <geom name="marca_alvo_coador" type="mesh" mesh="mesh_coador"
+            material="mat_coador" contype="0" conaffinity="0"/>
+      <!-- Tampa de colisão na BOCA DO FUNIL, onde ficaria o pano. Medido na
+           malha: a boca está a ~18,5 cm da base, com raio de 3,5 a 4,8 cm (a
+           xícara tem 3,9 cm). É o único geom do coador que colide, e existe
+           para o braço não entrar dentro do funil — as checagens
+           `bateu_na_mesa`/`auto_colisao` leem pares de geoms específicos e não
+           veem este, então ele não derruba episódio por si.
+           Cobre os 20% DE CIMA do filtro: o funil vai de 8,8 a 19,5 cm da
+           base, então os 20% superiores são 17,4-19,5 cm — centro em
+           18,43 cm, meia-altura 1,07 cm.
+           NÃO é isto que impede a xícara de atravessar: esta simulação usa
+           `mj_forward` e nunca `mj_step`, então contato é DETECTADO e nunca
+           RESOLVIDO. Quem faz a xícara pousar em cima é a altura de pouso, no
+           `z_boca_coador` do demo. -->
+      <!-- SEM COLISÃO (`contype`/`conaffinity` zerados). Ele existia para o
+           braço não entrar no funil, mas a checagem que o usava
+           (`bateu_no_coador`) está desligada — com ela ligada o braço travava
+           em 8 de 8 episódios, porque o antebraço varre esta região no
+           caminho. Enquanto isso, o cilindro ATIVO batia na caneca durante a
+           descida do transporte (24 cm) para o pouso (8 cm), já que ela
+           atravessa a faixa 15,6-19,5 cm. Inerte, ele não atrapalha e fica
+           documentado para quem for ligar o desvio de verdade — o que exige
+           um planejador, não este seguidor de waypoints. -->
+      <geom name="coador_boca" type="cylinder" pos="0 0 0.1753" size="0.048 0.0195"
+            rgba="0.9 0.2 0.2 0" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- ════════ A MAÇÃ ════════ (o sim_cafe_wla.py a move com --maca x y) -->
+    <body name="maca" pos="0.40 -0.10 0.719">
+      <freejoint name="maca_livre"/>
+      <geom name="maca" type="ellipsoid" size="0.038 0.038 0.035" mass="0.15" rgba="0.78 0.10 0.08 1"
+            friction="1.5 0.01 0.001" condim="4"/>
+      <geom name="maca_luz" type="ellipsoid" size="0.02 0.018 0.012" pos="-0.012 0.012 0.022"
+            rgba="0.95 0.55 0.30 1" contype="0" conaffinity="0" mass="0"/>
+      <geom name="maca_cabo" type="cylinder" size="0.003 0.009" pos="0 0 0.042" rgba="0.35 0.22 0.10 1"
+            contype="0" conaffinity="0" mass="0"/>
+    </body>
+
+    <!-- ════════ O X PRETO ════════ (fita isolante, só visual; --x x y) -->
+    <body name="x_preto" pos="0.33 0.10 0.6836">
+      <geom name="x_0" type="box" size="0.075 0.012 0.0005" euler="0 0 0.7854" rgba="0.03 0.03 0.03 1" contype="0" conaffinity="0" mass="0"/>
+      <geom name="x_1" type="box" size="0.075 0.012 0.0005" euler="0 0 -0.7854" rgba="0.03 0.03 0.03 1" contype="0" conaffinity="0" mass="0"/>
+    </body>
+
+    <camera name="global_view" pos="2.910 -5.040 3.860" xyaxes="0.866 0.500 0.000 -0.250 0.433 0.866" fovy="45"/>
+  </worldbody>
+
+  <default>
+    <geom friction="1.0"/>
+  </default>
+  <!-- pose de partida do nosso dataset da maçã (a mesma do --pose maca); no MuJoCo Viewer, escolha o keyframe "maca" -->
+  <keyframe>
+    <key name="maca" qpos="-0.3002 0.0372 -0.0065 0.4529 -0.1841 -0.0189 -0.2633 -0.0245 0.0036 0.4459 -0.188 0.0121 -0.0019 0.0002 0.1649 0.0137 0.0431 0.5468 0.0895 -0.4014 0.3219 0.0067 0 0 0 0 0 0 0 -0.3371 -0.2246 -0.159 0.4056 0.0015 -0.1734 0.04 0 0 0 0 0 0 0 0.61 0.24 0.731 1 0 0 0 0.4 -0.1 0.719 1 0 0 0"/>
+  </keyframe>
+</mujoco>

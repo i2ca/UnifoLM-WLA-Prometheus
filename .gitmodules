@@ -1,0 +1,9 @@
+[submodule "third_party/lerobot"]
+	path = third_party/lerobot
+	url = https://github.com/Breno-de-Angelo/lerobot
+[submodule "third_party/unifolm-wla"]
+	path = third_party/unifolm-wla
+	url = https://github.com/unitreerobotics/unifolm-wla
+[submodule "third_party/unitree_sdk2_python"]
+	path = third_party/unitree_sdk2_python
+	url = https://github.com/unitreerobotics/unitree_sdk2_python

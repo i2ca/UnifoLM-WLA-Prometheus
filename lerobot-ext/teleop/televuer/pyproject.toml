@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "televuer"
+version = "4.0.0"
+description = "XR vision and hand/controller teleoperate interface for unitree robotics"
+authors = [
+    { name = "silencht", email = "silencht@qq.com" }
+]
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # numpy 2 é exigido pelo lerobot >=0.5 ("numpy>=2.0.0,<2.3.0"). O pin antigo
+    # (numpy<2.0.0) era incompatível e ganhava a disputa no resolver, travando o
+    # ambiente inteiro no numpy 1.26. O código aqui não usa nenhuma API removida
+    # na 2.0 (np.float_, np.NaN, np.product, copy=False, .itemset(), ...), e o
+    # vuer 0.0.60 pede apenas "numpy>=1.21", sem teto — então subir é seguro.
+    "numpy>=2.0.0,<2.3.0",
+    # headless, não o opencv-python completo: o código só usa cvtColor/resize,
+    # nunca imshow/waitKey. E o lerobot depende de opencv-python-headless
+    # (>=4.9.0,<4.14.0) — os dois pacotes instalam o MESMO módulo cv2, então ter
+    # ambos gera conflito de binários. Mesma faixa do lerobot, de propósito.
+    "opencv-python-headless>=4.9.0,<4.14.0",
+    "logging-mp",
+    # Manter pinado: televuer.py importa WebRTCVideoPlane e WebRTCStereoVideoPlane
+    # de vuer.schemas, que são API desta versão.
+    "vuer[all]==0.0.60",
+    # O vuer 0.0.60 declara "params-proto>=2.13.0" sem teto, mas o params-proto 3.x
+    # removeu `Flag`, e vuer/server.py o importa -> ImportError no `from vuer import
+    # Vuer`, mascarado por um except genérico do vuer que culpa o aiohttp. Pinado
+    # aqui porque não dá para corrigir o pyproject do vuer, que vem do PyPI.
+    "params-proto>=2.13.0,<3.0.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

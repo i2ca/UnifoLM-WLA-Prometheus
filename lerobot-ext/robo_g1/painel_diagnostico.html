@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G1 Diagnóstico</title>
+<style>
+:root{color-scheme:dark;--fundo:#0f1115;--caixa:#171a21;--borda:#2a2f3a;--texto:#e4e6eb;--apagado:#8b93a1;
+--verde:#3fb950;--amarelo:#e3b341;--vermelho:#f85149;--azul:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fundo);color:var(--texto);font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 16px;
+background:#12151b;border-bottom:1px solid var(--borda)}
+h1{font-size:15px;margin:0 8px 0 0}
+#trava{flex:1 1 380px;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;font-weight:600;
+font-size:15px;background:#333;color:#fff}
+#trava.livre{background:#1d4428;border:1px solid var(--verde)}
+#trava.aguarda{background:#4a3a10;border:1px solid var(--amarelo)}
+#trava.apertado{background:#5a1a1a;border:1px solid var(--vermelho);animation:pisca 1s steps(2) infinite}
+#trava.sem{background:#2a2a2a;border:1px solid #555}
+@keyframes pisca{50%{background:#8a1f1f}}
+#trava small{font-weight:400;color:#ddd;display:block;font-size:12px}
+button{font:inherit;font-weight:600;padding:8px 14px;border-radius:6px;border:1px solid;cursor:pointer;color:#fff}
+button:disabled{opacity:.35;cursor:not-allowed}
+#bRearma{background:#1f6f3a;border-color:var(--verde)}
+#bPanico{background:#8a1f1f;border-color:var(--vermelho)}
+.pilula{padding:3px 9px;border-radius:99px;border:1px solid var(--borda);color:var(--apagado);white-space:nowrap}
+.pilula.ok{color:var(--verde);border-color:#2c5a36}.pilula.ruim{color:var(--vermelho);border-color:#6a2a2a}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px;padding:12px 16px}
+section{background:var(--caixa);border:1px solid var(--borda);border-radius:8px;overflow:hidden;min-width:0}
+section h2{font-size:13px;margin:0;padding:8px 12px;border-bottom:1px solid var(--borda);display:flex;justify-content:space-between;gap:8px}
+section h2 span{color:var(--apagado);font-weight:400}
+.largo{grid-column:1/-1}
+.rola{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:3px 8px;text-align:right;white-space:nowrap}
+th{color:var(--apagado);font-weight:500;position:sticky;top:0;background:var(--caixa)}
+td:first-child,th:first-child{text-align:left}
+tr:nth-child(even) td{background:#1b1f27}
+tr.grupo td{background:#20252f;color:var(--apagado);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.q{color:var(--azul)}.quente{color:var(--amarelo);font-weight:600}.muitoquente{color:var(--vermelho);font-weight:700}
+.erro{color:var(--vermelho);font-weight:700}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;padding:10px 12px}
+.kv b{color:var(--apagado);font-weight:500}
+.cams{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px;padding:8px}
+.cams figure{margin:0}.cams img{width:100%;display:block;border-radius:4px;background:#000;min-height:120px}
+.cams figcaption{color:var(--apagado);padding:4px 2px}
+.barra{height:8px;background:#2a2f3a;border-radius:4px;overflow:hidden}.barra i{display:block;height:100%;background:var(--verde)}
+@media (max-width:600px){main{grid-template-columns:1fr;padding:8px}header{padding:8px}}
+</style></head><body>
+<header>
+  <h1>G1 · diagnóstico</h1>
+  <div id="trava" class="sem"><div>…<small></small></div></div>
+  <button id="bRearma" onclick="rearma()" disabled>Rearmar</button>
+  <button id="bPanico" onclick="panico()">Travar agora</button>
+  <button id="bPose" onclick="pose()" style="background:#1f4f8a;border-color:#58a6ff">Assumir pose inicial</button>
+  <button id="bPoseGrav" onclick="pose('gravacao')" style="background:#1f6a4f;border-color:#3fb950">Pose de gravação</button>
+  <span id="pPose" class="pilula" style="max-width:420px;white-space:normal">pose inicial —</span>
+  <span id="pModo" class="pilula">modo —</span>
+  <span id="pBat" class="pilula">bateria —</span>
+  <span id="pLig" class="pilula">—</span>
+</header>
+<main>
+  <section class="largo"><h2>Câmeras <span id="camInfo"></span></h2>
+    <div id="camServ" style="padding:6px 12px;color:var(--apagado);border-bottom:1px solid var(--borda)"></div>
+    <div class="cams" id="cams"></div></section>
+  <section class="largo"><h2>Corpo — 29 juntas <span id="corpoInfo"></span></h2>
+    <div class="rola"><table><thead><tr><th>junta</th><th>#</th><th>q (rad)</th><th>q (°)</th><th>dq (rad/s)</th>
+    <th>τ (Nm)</th><th>temp 1 (°C)</th><th>temp 2 (°C)</th><th>tensão (V)</th><th>erro</th></tr></thead>
+    <tbody id="tCorpo"></tbody></table></div></section>
+  <section><h2>Mão esquerda (Dex3) <span id="mlInfo"></span></h2><div class="rola"><table><thead><tr><th>junta</th>
+    <th>q</th><th>dq</th><th>τ (bruto)</th><th>temp (°C)</th><th>V</th><th>erro</th></tr></thead><tbody id="tMaoL"></tbody></table></div>
+    <div class="kv" id="kMaoL"></div></section>
+  <section><h2>Mão direita (Dex3) <span id="mrInfo"></span></h2><div class="rola"><table><thead><tr><th>junta</th>
+    <th>q</th><th>dq</th><th>τ (bruto)</th><th>temp (°C)</th><th>V</th><th>erro</th></tr></thead><tbody id="tMaoR"></tbody></table></div>
+    <div class="kv" id="kMaoR"></div></section>
+  <section><h2>IMU</h2><div class="kv" id="kImu"></div></section>
+  <section><h2>Bateria e placa-mãe</h2><div class="kv" id="kBat"></div></section>
+  <section><h2>Trava (ponte v3)</h2><div class="kv" id="kTrava"></div></section>
+  <section><h2>Jetson (PC2) <span id="jInfo"></span></h2><div class="kv" id="kJet"></div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const f = (v, n = 2) => (v === undefined || v === null || isNaN(v)) ? '—' : (+v).toFixed(n);
+const sinal = (v, n = 3) => (v >= 0 ? '+' : '') + f(v, n);
+const tcls = t => t >= 75 ? 'muitoquente' : t >= 60 ? 'quente' : '';
+const kv = (el, pares) => el.innerHTML = pares.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
+let ultimo = null;
+
+function camera(nome) {
+  if ($('cam_' + nome)) return;
+  const fig = document.createElement('figure');
+  fig.innerHTML = `<img id="cam_${nome}" alt="câmera ${nome}"><figcaption id="capt_${nome}">${nome}</figcaption>`;
+  $('cams').append(fig);
+  const img = $('cam_' + nome);
+  const liga = () => img.src = `cam/${nome}.jpg?t=${Date.now()}`;
+  img.onload = () => setTimeout(liga, 80);
+  img.onerror = () => setTimeout(liga, 1500);
+  liga();
+}
+
+function trava(e) {
+  const p = e.panico, el = $('trava'), b = $('bRearma');
+  let cls, txt, sub;
+  if (!p) {
+    cls = 'sem'; txt = '⚪ Ponte v3 sem sinal';
+    sub = 'Nada chegando na porta 6007: a ponte com pânico não está rodando.';
+    b.disabled = true;
+  } else if (!p.panico) {
+    cls = 'livre'; txt = '🟢 LIVRE — comandos de braço passam';
+    sub = `lento e leve: ${p.vel_braco} rad/s, kp ≤ ${p.kp_braco}/${p.kp_punho}`;
+    b.disabled = true;
+  } else if (!p.botao_ok) {
+    cls = 'apertado'; txt = '🔴 BLOQUEADO — cogumelo APERTADO';
+    sub = p.gpio === 'ok' ? 'Solte o botão para poder rearmar.' : `GPIO: ${p.gpio}`;
+    b.disabled = true;
+  } else {
+    cls = 'aguarda'; txt = '🟡 BLOQUEADO — botão solto, falta REARMAR';
+    sub = `${p.motivo || ''} · solto há ${f(p.botao_solto_s, 1)} s`;
+    b.disabled = p.botao_solto_s < 1.0;
+  }
+  el.className = cls;
+  el.innerHTML = `<div>${txt}<small>${sub}</small></div>`;
+  kv($('kTrava'), p ? [['estado', p.panico ? 'BLOQUEADO' : 'livre'], ['pose inicial', e.pose_inicial || '—'],
+      ['motivo', p.motivo || '—'],
+      ['GPIO', p.gpio], ['botão', p.botao_ok ? `solto há ${f(p.botao_solto_s, 1)} s` : 'apertado / circuito aberto'],
+      ['comandos descartados', p.descartados], ['vel. braço', p.vel_braco + ' rad/s'],
+      ['kp braço / punho', `${p.kp_braco} / ${p.kp_punho}`]] : [['estado', 'ponte v3 sem sinal']]);
+}
+
+async function rearma() {
+  if (!confirm('Rearmar a ponte? Confira que o robô e a área estão livres.')) return;
+  await fetch('rearmar', {method: 'POST'});
+}
+async function panico() { await fetch('panico', {method: 'POST'}); }
+async function pose(tipo = 'inicial') {
+  const nome = tipo === 'gravacao' ? 'a pose de GRAVAÇÃO (coluna reta, braços abertos e levantados, fora da cena)'
+                                   : 'a pose inicial (coluna reta, mãos afastadas)';
+  if (!confirm('Levar os braços DEVAGAR para ' + nome + ' e abrir as mãos? ' +
+               'Área em volta dos braços livre? Mão no cogumelo. No fim a ponte fica TRAVADA segurando a pose.')) return;
+  const r = await (await fetch('pose_inicial?tipo=' + tipo, {method: 'POST'})).json();
+  if (!r.ok) alert('Não comecei: ' + r.msg);
+}
+
+function linhasJuntas(js, ini, fim) {
+  return js.slice(ini, fim).map(j => {
+    const t = j.temp, tm = Math.max(...t);
+    return `<tr><td>${j.nome}</td><td>${j.i}</td><td class="q">${sinal(j.q)}</td><td>${sinal(j.q * 57.2958, 1)}</td>
+      <td>${sinal(j.dq, 2)}</td><td>${sinal(j.tau, 2)}</td><td class="${tcls(t[0])}">${f(t[0], 0)}</td>
+      <td class="${tcls(t[1] ?? 0)}">${t.length > 1 ? f(t[1], 0) : '—'}</td><td>${f(j.vol, 1)}</td>
+      <td class="${j.erro ? 'erro' : ''}">${j.erro ? '0x' + j.erro.toString(16) : '0'}</td></tr>`;
+  }).join('');
+}
+
+function mao(lado, el, kel, info, idade) {
+  if (!lado) { el.innerHTML = '<tr><td colspan=7>sem dados</td></tr>'; return; }
+  el.innerHTML = lado.juntas.map(j => `<tr><td>${j.nome}</td><td class="q">${sinal(j.q)}</td><td>${sinal(j.dq, 2)}</td>
+    <td>${sinal(j.tau, 2)}</td><td class="${tcls(Math.max(...j.temp))}">${j.temp.map(t => f(t, 0)).join(' / ')}</td>
+    <td>${f(j.vol, 1)}</td><td class="${j.erro ? 'erro' : ''}">${j.erro ? '0x' + j.erro.toString(16) : '0'}</td></tr>`).join('');
+  const pres = lado.pressao.map((p, k) => `#${k}: máx ${f(Math.max(...p.pressao), 0)} · ${f(Math.max(...p.temp), 0)} °C`);
+  kv(kel, [['alimentação', `${f(lado.power_v, 1)} V · ${f(lado.power_a, 2)} A`],
+    ['sistema / dispositivo', `${f(lado.system_v, 1)} V / ${f(lado.device_v, 1)} V`],
+    ['erro', lado.erro.some(x => x) ? `<span class="erro">${lado.erro.join(', ')}</span>` : '0'],
+    ['pressão', pres.join('<br>') || '—']]);
+  $(info).textContent = idade === null ? 'sem sinal' : `${f(idade * 1000, 0)} ms`;
+}
+
+async function tique() {
+  let e;
+  try { e = await (await fetch('estado.json', {cache: 'no-store'})).json(); }
+  catch (_) { $('pLig').className = 'pilula ruim'; $('pLig').textContent = 'painel fora do ar'; return setTimeout(tique, 1000); }
+  ultimo = e;
+  trava(e);
+  $('pPose').textContent = 'pose inicial: ' + (e.pose_inicial || '—');
+  const fo = e.fontes, vivo = fo.low !== null && fo.low < 0.5;
+  $('pLig').className = 'pilula ' + (vivo ? 'ok' : 'ruim');
+  $('pLig').textContent = vivo ? 'DDS ok' : 'DDS sem lowstate';
+  $('pModo').className = 'pilula ' + (e.modo ? 'ok' : 'ruim');
+  $('pModo').textContent = 'modo ' + (e.modo || '— (ponte fora)');
+  if (e.bateria) {
+    const b = e.bateria;
+    $('pBat').className = 'pilula ' + (b.soc > 25 ? 'ok' : 'ruim');
+    $('pBat').textContent = `bateria ${b.soc}% · ${f(b.tensao_v, 1)} V`;
+    kv($('kBat'), [['carga', `${b.soc}% <div class="barra"><i style="width:${b.soc}%"></i></div>`], ['saúde', b.soh + '%'],
+      ['tensão', f(b.tensao_v, 2) + ' V'], ['corrente', f(b.corrente_a, 2) + ' A'], ['ciclos', b.ciclos],
+      ['células', b.celulas_mv ? `${b.celulas_mv[0]}–${b.celulas_mv[1]} mV` : '—'],
+      ['temperaturas', b.temps.join(', ') + ' °C'], ['estado BMS', b.estado.join(', ')],
+      ['placa-mãe temp', e.placa ? e.placa.temperature.filter(x => x).join(', ') + ' °C' : '—'],
+      ['placa-mãe valores', e.placa ? e.placa.value.filter(x => x).map(x => f(x, 2)).join(', ') : '—'],
+      ['ventoinhas', e.placa ? e.placa.fan_state.join(', ') : '—']]);
+  }
+  if (e.corpo) {
+    const js = e.corpo.juntas, g = t => `<tr class="grupo"><td colspan=10>${t}</td></tr>`;
+    $('tCorpo').innerHTML = g('perna esquerda') + linhasJuntas(js, 0, 6) + g('perna direita') + linhasJuntas(js, 6, 12) +
+      g('cintura') + linhasJuntas(js, 12, 15) + g('braço esquerdo') + linhasJuntas(js, 15, 22) +
+      g('braço direito') + linhasJuntas(js, 22, 29);
+    const tmax = Math.max(...js.map(j => Math.max(...j.temp)));
+    const quente = js.reduce((a, j) => Math.max(...j.temp) > Math.max(...a.temp) ? j : a);
+    $('corpoInfo').innerHTML = `tick ${e.corpo.tick} · mode_machine ${e.corpo.mode_machine} · mais quente: ` +
+      `<span class="${tcls(tmax)}">${quente.nome} ${f(tmax, 0)} °C</span> · ${f(fo.low * 1000, 0)} ms`;
+    const i = e.corpo.imu;
+    kv($('kImu'), [['roll / pitch / yaw', i.rpy_graus.map(v => sinal(v, 1)).join(' / ') + ' °'],
+      ['giroscópio', i.giro.map(v => sinal(v, 2)).join(', ') + ' rad/s'],
+      ['acelerômetro', i.acel.map(v => sinal(v, 2)).join(', ') + ' m/s²'],
+      ['quatérnio', i.quat.map(v => f(v, 3)).join(', ')], ['temperatura', f(i.temp, 0) + ' °C']]);
+  } else { $('tCorpo').innerHTML = '<tr><td colspan=10>sem lowstate no DDS</td></tr>'; }
+  mao(e.mao_left, $('tMaoL'), $('kMaoL'), 'mlInfo', fo.left);
+  mao(e.mao_right, $('tMaoR'), $('kMaoR'), 'mrInfo', fo.right);
+  const camTxt = [];
+  for (const [n, c] of Object.entries(e.cameras)) {
+    if (c.idade !== null && c.idade < 5) camera(n);
+    const cap = $('capt_' + n);
+    const t = c.idade === null ? 'sem sinal' : c.idade > 2 ? `parada há ${f(c.idade, 0)} s` : `${f(c.fps, 1)} fps`;
+    if (cap) cap.textContent = `${n} (${c.nome || '?'}${c.tam ? ' ' + c.tam.join('×') : ''}) — ${t}`;
+    camTxt.push(`${n}: ${t}`);
+  }
+  $('camInfo').textContent = camTxt.join(' · ');
+  const sc = Object.values(e.servidor_cameras || {})[0];
+  $('camServ').innerHTML = sc ? `<b>servidor de câmeras</b> versão <b>${sc.versao}</b> · reiniciado há ` +
+    `<b>${Math.floor((e.agora - sc.iniciado) / 60)} min ${Math.floor((e.agora - sc.iniciado) % 60)} s</b> · ` +
+    Object.entries(sc.config).map(([k, v]) => `${k}: <b>${v}</b>`).join(' · ') + '<br>' +
+    Object.entries(sc.cameras).map(([k, v]) => `${v === 'ok' ? '🟢' : '🔴'} ${k}: ${v}`).join(' · ')
+    : 'servidor de câmeras sem status (versão antiga ou fora do ar)';
+  const J = e.jetson;
+  const procs = Object.entries(J.processos).map(([k, v]) => v ? `🟢 ${k} <span style="color:var(--apagado)">pid ${v.pid}, ` +
+    `${Math.floor(v.ha_s / 60)} min, ${f(v.cpu, 0)}% cpu</span>` : `⚪ ${k}`).join('<br>');
+  kv($('kJet'), [['temperaturas', Object.entries(J.temperaturas).map(([k, v]) => `${k} <span class="${tcls(v)}">${f(v, 0)}°</span>`).join(' · ')],
+    ['carga', J.carga.map(v => f(v, 2)).join(' ') + ` (${J.nucleos} núcleos)`],
+    ['memória', `${J.mem_usada_mb} / ${J.mem_total_mb} MB`], ['processos', procs]]);
+  setTimeout(tique, 250);
+}
+tique();
+</script></body></html>

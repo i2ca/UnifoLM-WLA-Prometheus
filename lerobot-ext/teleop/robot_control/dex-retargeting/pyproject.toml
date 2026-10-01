@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dex_retargeting"
+version = "0.4.7"
+description = "Hand pose retargeting for dexterous robot hand. Modified by [silencht@qq.com]"
+authors = [
+    { name = "Yuzhe Qin", email = "y1qin@ucsd.edu" }
+]
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+urls = { "Homepage" = "https://github.com/dexsuite/dex-retargeting" }
+
+dependencies = [
+    # Mesmo caso do televuer: `numpy<2.0.0` é incompatível com o lerobot >=0.5
+    # ("numpy>=2.0.0,<2.3.0") e, num env limpo, um elimina o outro. O código aqui
+    # não usa nenhuma API removida na 2.0 (np.float_, np.NaN, np.product, copy=False,
+    # .itemset(), .newbyteorder(), ...) — varredura completa, zero ocorrências.
+    "numpy>=2.0.0,<2.3.0",
+    # `torch==2.3.0` era pin exato e derrubaria o torch 2.11+cu128 que a RTX 5070
+    # (Blackwell, sm_120) exige. O uso de torch aqui é básico e estável — SmoothL1Loss,
+    # as_tensor, norm, autograd em optimizer.py —, nada que tenha mudado entre 2.3 e
+    # 2.11. Faixa alinhada com a do lerobot 0.6.1.
+    "torch>=2.7,<2.12",
+    "pytransform3d>=3.5.0",
+    "pin>=2.7.0",
+    # SEM o teto `<2.8.0` de propósito: os wheels do nlopt até 2.7.x foram compilados
+    # contra o numpy 1, e importar `nlopt` sob numpy 2 estoura
+    # "module compiled using NumPy 1.x cannot be run in NumPy 2.x" — que aqui aparecia
+    # disfarçado, engolido pelo `except ImportError` do hand_retargeting, virando um
+    # "dex_retargeting is required" enganoso. O 2.8+ é compilado com numpy 2.
+    # A API usada em optimizer.py (nlopt.opt, set_min_objective, set_ftol_abs...) é
+    # a mesma desde a 2.6.
+    "nlopt>=2.8.0",
+    "trimesh>=4.4.0",
+    "anytree>=2.12.0",
+    "pyyaml>=6.0.0",
+    "lxml>=5.2.2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

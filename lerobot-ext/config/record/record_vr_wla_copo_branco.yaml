@@ -1,0 +1,91 @@
+# GRAVAÇÃO: pegar o COPO BRANCO (01/10), no formato do WLA: mesma teleoperação do teleop_vr_wla.yaml, gravando
+# head_stereo_left/right + wrist_left/wrist_right (640x480, nomes do dataset da Unitree), as juntas dos braços,
+# a cintura, as pernas medidas e as mãos Dex3. push_to_hub: false — o dataset fica só neste PC.
+#
+#   cd lerobot-ext
+#   conda activate prometheus-vla
+#   python init_lerobot_record_v2.py --config_path=config/record/record_vr_wla_copo_branco.yaml
+#
+# Cena: copo branco na mesa (a caixa) em frente ao robô. Em cada episódio: pegar o copo e levantá-lo.
+# Varie a posição do copo entre episódios (10–20 cm) — sem variação o modelo decora um ponto só.
+# Comece cada episódio com os braços na mesma pose de partida e termine segurando o copo no ar.
+#
+# Grava também se o robô andou (base.vx/vy/vyaw) e o yaw da cintura. Prefira andar entre episódios.
+# O conversor (wla/converte_dataset_dex3_wla.py) usa a mão MEDIDA como ação — o braço pode ceder sem estragar.
+#
+# A salva o episódio, B descarta.
+
+robot:
+  type: unitree_g1_dex3
+  robot_ip: "192.168.123.164"
+  use_loco: true
+  use_waist_yaw: true
+  waist_yaw_limit: 1.0
+  cameras_wla: true
+  cameras_wla_estereo: true
+  gravar_locomocao: true      # base.vx/vy/vyaw/height no vetor de ação: registra se o robô andou
+  gravar_pernas_cintura: true # estado: 12 juntas das pernas + roll/pitch da cintura MEDIDOS (lower_body do WLA)
+  cintura_reta: true          # coluna RETA: roll/pitch da cintura seguros em 0 (kp/kd 300/8), não onde o peso deixar
+  use_depth_camera: false
+  use_wrist_camera: false
+
+teleop:
+  type: xr_g1_arm
+  zmq: true
+  img_server_ip: "192.168.123.164"
+  input_mode: "controller"
+  display_mode: "ego"
+  ee_type: "dex3"
+  dashboard: true
+  dashboard_port: 8080
+  vuer_host_ip: ""
+  head_cam_size: 1.0
+  head_cam_distance: 1.5
+  show_hud: true
+
+  stereo_head: false   # 3D ficou ruim (30/09): tela 2D com o olho esquerdo da ZED
+  head_cam_keys: ["head_stereo_left", "head_stereo_right"]
+
+  torso_follows_head: true
+  torso_head_gain: 1.0
+  torso_max_speed: 0.8
+  torso_head_deadzone: 0.05
+  waist_yaw_limit: 1.0
+  waist_invert: false
+  head_yaw_lock: true
+
+  enable_locomotion: true
+  loco_style: "original"
+  loco_port: 6005
+  loco_ip: ""
+  loco_max_speed: 0.3
+  loco_max_lateral: 0.2
+  loco_max_yaw: 0.5
+  loco_deadzone: 0.2
+  loco_no_dataset: true       # manda o comando de andar para o dataset (precisa do gravar_locomocao do robô)
+
+  # painel da câmera do punho direito, que segue a sua mão (agora na 5555, chave wrist_right)
+  show_wrist_cam: true
+  wrist_img_port: 5555
+  wrist_cam_name: "wrist_right"
+  wrist_cam_side: "right"
+  wrist_cam_size: 0.10
+  wrist_cam_offset: [0.0, -0.14, 0.0]
+
+dataset:
+  repo_id: Mrwlker/copo_branco_2026-10-01
+  root: "meu_dataset/copo_branco_2026-10-01"
+  push_to_hub: false
+  # Vídeos encodados DURANTE o episódio (o salvar fica rápido). Se o laço de gravação ficar lento no
+  # notebook, troque para false — o controle do robô continua vivo no salvar de qualquer jeito (injeção 6).
+  streaming_encoding: true
+  encoder_threads: 2
+  single_task: "Pick up the white mug."
+  fps: 30
+  num_episodes: 50
+  episode_time_s: 30
+  reset_time_s: 15
+  rgb_encoder:
+    vcodec: "h264"
+
+play_sounds: false
