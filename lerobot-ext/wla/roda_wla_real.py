@@ -226,6 +226,10 @@ def main():
                     help="não manda as câmeras dos punhos (wrist_left/wrist_right) ao modelo")
     ap.add_argument("--ensaio", action="store_true", help="roda tudo, mas NÃO envia nada ao robô")
     ap.add_argument("--sem-maos", action="store_true", help="não comanda as Dex3 (só braços)")
+    ap.add_argument("--z-min", type=float, default=None,
+                    help="cm (z da mão na pelvis): PISO — a mão nunca é mandada abaixo disto. Use quando a mesa estiver "
+                         "mais alta que no dataset (ex.: maçã gravada na caixa a ~-3 cm, mesa da caneca ~10 cm mais alta: "
+                         "--z-min 5)")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
                     help="yaw = gira o tronco como o modelo pede (o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura onde está")
@@ -627,6 +631,8 @@ def main():
                         # com escala < 1, só essa fração do caminho a partir da mão medida
                         desejo = pm + a.escala * (v[:3] - pm) + comp[l]
                         alvos_p[l] = np.clip(desejo, caixa_lo[l], caixa_hi[l])
+                        if a.z_min is not None:   # piso: a mão não desce abaixo da mesa (z na pelvis)
+                            alvos_p[l][2] = max(alvos_p[l][2], a.z_min / 100)
                     # as mãos não se cruzam nem se encostam: esquerda sempre >= mao_mao_min à esquerda da direita
                     if "left" not in lados_ativos:
                         alvos_p["left"] = atual["medida"]["left"][1].copy()   # parado: vale onde ele está
