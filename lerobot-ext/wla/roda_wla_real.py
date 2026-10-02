@@ -173,7 +173,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--robo", default="192.168.123.164")
     ap.add_argument("--porta", type=int, default=8090, help="porta da cabine")
-    ap.add_argument("--segundos", type=float, default=30)
+    ap.add_argument("--segundos", type=float, default=30, help="0 = sem limite (modo cabine: termina com Ctrl+C ou parar)")
     ap.add_argument("--escala", type=float, default=1.0, help="fração do movimento proposto que é executada")
     ap.add_argument("--caixa", type=float, default=0.0,
                     help="caixa POR JUNTA em volta da pose de partida (rad; 0 = desligada, só os limites do URDF). "
@@ -243,6 +243,11 @@ def main():
                     help="o que vai ao modelo como estado dos dedos: zero = como nos datasets gravados até 02/10 (as "
                          "juntas da Dex3 saíram 0 por um defeito da gravação); medido = a posição real (modelos "
                          "treinados com datasets gravados depois da correção)")
+    ap.add_argument("--atalhos", nargs="*", default=[
+        "pegar caneca=Pick up the white mug.",
+        "caneca → coador=Place the white mug under the coffee strainer.",
+        "maçã → X=Pick up the apple and place it on the black X."],
+                    help="botões de tarefa na cabine, 'rótulo=frase'")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
@@ -270,6 +275,7 @@ def main():
     cabine = sw.Cabine()
     sw.sobe(cabine, a.porta)
     cabine.define_tarefa(a.tarefa)
+    cabine.atalhos = [tuple(x.split("=", 1)) for x in a.atalhos]
     cabine.publica_estado({"modo": "carregando o WLA-1.0 ..."})
     cam = sw.Camera(a.robo, 5555, cabine, "head_camera" if a.cabeca == "cor" else "head_stereo_left")
     # Punhos: como no treino (cabeça + punho esq. + punho dir.). Entram só se estiverem chegando.
@@ -411,8 +417,11 @@ def main():
             panico_software(f"lowstate parou de chegar ({onde})")
             return False
         if cabine.parada_pedida():
-            panico_software(f"botão parar da cabine ({onde})")
-            return False
+            # 02/10: PARAR da cabine = o robô MANTÉM a posição em que está e espera outra tarefa (não é pânico;
+            # a emergência é o cogumelo). Limpa a tarefa — o laço segura a pose comandada atual.
+            cabine.define_tarefa("")
+            print(f"\n   ⏸ parar pedido na cabine ({onde}): mantendo a posição — mande outra tarefa para continuar",
+                  flush=True)
         return True
 
     # ── 0. pose inicial, devagar ──
@@ -513,6 +522,10 @@ def main():
         n = 0
         while not pare.is_set():
             try:
+                frase_cab, seq = cabine.tarefa()
+                if not (frase_cab or a.tarefa):      # sem tarefa: o robô SEGURA e a rede não é consultada
+                    time.sleep(0.1)
+                    continue
                 t_obs = time.time()
                 obs, q, ee, garras, frase = monta_obs()
                 # Âncora = pose COMANDADA no instante da observação (o braço cede sob o peso; ancorar no
@@ -523,7 +536,7 @@ def main():
                 _, acao, ms, _, _ = S.acao(obs)
                 n += 1
                 trecho = {"n": n, "acao": acao, "ms": ms, "t_obs": t_obs, "q": q, "ee": ee, "garras": garras,
-                          "frase": frase, "base": {l: fk.pose(q_cmd, l) for l in ("left", "right")},
+                          "frase": frase, "seq": seq, "base": {l: fk.pose(q_cmd, l) for l in ("left", "right")},
                           "medida": {l: fk.pose(q, l) for l in ("left", "right")}}
                 with trava:
                     novo_trecho[0] = trecho
@@ -637,7 +650,7 @@ def main():
     try:
         avisou_assenta = [False]
         t_ini = time.time()
-        while time.time() - t_ini < a.segundos + a.assenta:
+        while a.segundos <= 0 or time.time() - t_ini < a.segundos + a.assenta:
             tc = time.time()
             if not seguro("no laço de controle"):
                 return
@@ -664,6 +677,17 @@ def main():
                 avisou_assenta[0] = "feito"
             with trava:
                 chegou, novo_trecho[0] = novo_trecho[0], None
+            frase_agora, seq_agora = cabine.tarefa()
+            if not (frase_agora or a.tarefa):
+                chegou = None
+                if atual is not None:
+                    print("   ⏸ segurando (sem tarefa) — mande uma tarefa na cabine para continuar", flush=True)
+                    atual, anterior = None, None
+            elif chegou is not None and chegou.get("seq") != seq_agora:
+                chegou = None                      # trecho calculado com a frase anterior
+            if atual is not None and atual.get("seq") != seq_agora:
+                print(f"   ▶ nova tarefa: {frase_agora!r}", flush=True)
+                atual, anterior = None, None
             if chegou is not None:
                 if atual is not None:
                     _registra(atual, stats, log, t_ini, alvo, q29(), cabine, a, est, partida, fech_mao, usados)

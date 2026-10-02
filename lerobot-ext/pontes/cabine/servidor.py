@@ -66,6 +66,7 @@ class Cabine:
         self._seq = 0
         self._estado: dict[str, Any] = {}
         self._tarefa = ""
+        self.atalhos: list[tuple[str, str]] = []   # (rótulo, frase) -> botões na página (02/10)
         self._tarefa_seq = 0
         self._parada = False
         self._pedido_copo = False
@@ -153,6 +154,7 @@ class Cabine:
                 "cameras": {c: round(agora - t, 2) for c, t in self._quando.items()},
                 "tarefa": self._tarefa,
                 "tarefa_seq": self._tarefa_seq,
+                "atalhos": [{"rotulo": r, "frase": f} for r, f in self.atalhos],
                 "parada_pedida": self._parada,
                 "fluxos_abertos": self._clientes,
             }
@@ -307,7 +309,10 @@ PAGINA = """<!doctype html>
   <form onsubmit="manda(event)">
     <input id="t" placeholder="o que o robô deve fazer" autocomplete="off">
     <button>mandar</button>
-    <button type="button" onclick="fetch('parar',{method:'POST'})">parar</button>
+    <button type="button" onclick="fetch('parar',{method:'POST'})"
+            title="o robô MANTÉM a posição em que está e espera outra tarefa (emergência: o cogumelo)"
+            style="background:#5a2a2a;border-color:#8a3c3c">⏸ parar (mantém a posição)</button>
+    <span id="atalhos"></span>
     <button type="button" onclick="fetch('copo',{method:'POST'})" title="mesma coisa que a tecla ç na janela do MuJoCo">mudar xícara (ç)</button>
   </form>
   <small id="meta"></small>
@@ -323,6 +328,26 @@ PAGINA = """<!doctype html>
 <script>
 const cams = document.getElementById('cams');
 const vistas = new Set();
+
+async function tarefa(texto) {
+  await fetch('tarefa', {method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify({texto})});
+}
+let atalhosVistos = '';
+function atalhos(e) {
+  const lista = e.atalhos || [];
+  const chave = JSON.stringify(lista);
+  if (chave === atalhosVistos) return;
+  atalhosVistos = chave;
+  const el = document.getElementById('atalhos');
+  el.innerHTML = '';
+  for (const a of lista) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = a.rotulo; b.title = a.frase;
+    b.onclick = () => tarefa(a.frase);
+    el.appendChild(b);
+  }
+}
 
 async function manda(e) {
   e.preventDefault();
@@ -395,9 +420,9 @@ async function tique() {
     const velho = idades.length ? Math.max(...idades) : 99;
     document.getElementById('luz').className = velho > 2 ? 'off' : 'on';
     document.getElementById('meta').textContent =
-      `tarefa: ${e.tarefa || '—'} · ${e.fluxos_abertos} fluxo(s) de vídeo`;
+      `tarefa: ${e.tarefa || '— (segurando)'} · ${e.fluxos_abertos} fluxo(s) de vídeo`;
     document.getElementById('estado').textContent = JSON.stringify(e, null, 2);
-    desenha(e); objetos(e);
+    desenha(e); objetos(e); atalhos(e);
   } catch (_) { document.getElementById('luz').className = 'off'; }
 }
 // ── Predição, desenhada AQUI a partir do JSON ─────────────────────────
