@@ -174,6 +174,17 @@ class Falador:
                 print(f"   (fala falhou: {e})", flush=True)
 
 
+# Etapas de cada tarefa para a narração do ER-1 (02/10): pergunta SIM/NÃO (câmera da cabeça) -> o que o robô
+# diz quando ela vira SIM duas vezes seguidas. As perguntas seguem o formato que acertou nos testes do coador.
+ETAPAS = {
+    "apple": [("Is the robot hand holding the red apple?", "I have the apple."),
+              # "Is the red apple on the black X?" dava SIM com a maçã AO LADO do X
+              ("Is the black X covered by the red apple?", "The apple is on the X. Done.")],
+    "under the coffee strainer": [("Is there a mug directly below the coffee strainer?", "The mug is under the strainer. Done.")],
+    "pick up the white mug": [("Is the robot hand holding the white mug?", "I have the mug. Done.")],
+}
+
+
 def R_de(rpy):
     return Rotation.from_euler("xyz", rpy).as_matrix()
 
@@ -195,7 +206,11 @@ def main():
     ap.add_argument("--narra", default="http://127.0.0.1:8098",
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
-    ap.add_argument("--narra-s", type=float, default=10.0, help="segundos entre as narrações do ER-1")
+    ap.add_argument("--narra-s", type=float, default=4.0, help="segundos entre as perguntas do ER-1")
+    ap.add_argument("--narra-modo", choices=["etapas", "livre"], default="etapas",
+                    help="etapas = o ER-1 responde SIM/NÃO se cada etapa da tarefa já aconteceu e o robô só fala quando "
+                         "muda de etapa (02/10: a descrição livre repetia 'Reaching for the apple' com a mão parada e "
+                         "levava 1,5 s); livre = descrição livre a cada --narra-s")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
@@ -629,9 +644,42 @@ def main():
             t = re.sub(r"\b(\w+)ing\b", r"\1", t)          # reaching == reach
             return " ".join(w for w in t.split() if w not in ("i", "am", "the", "a", "an", "is", "on", "my"))
 
+        etapa = {"frase": None, "i": 0, "sims": 0}
+
+        def pergunta(q, livre):
+            u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": int(livre), "max": 32})
+            r = json.loads(urllib.request.urlopen(u, timeout=15).read())
+            if r.get("erro"):
+                raise RuntimeError(r["erro"])
+            return r
+
         while not pare.is_set():
             time.sleep(a.narra_s)
             frase = cabine.tarefa()[0] or a.tarefa
+            if a.narra_modo == "etapas":
+                if not frase or time.time() - falhou < 60:
+                    continue
+                if etapa["frase"] != frase:
+                    etapa.update(frase=frase, i=0, sims=0)
+                lista = next((v for k, v in ETAPAS.items() if k in frase.lower()), [])
+                if etapa["i"] >= len(lista):
+                    continue
+                q, dito = lista[etapa["i"]]
+                try:
+                    r = pergunta(q, False)
+                except Exception as e:  # noqa: BLE001
+                    falhou = time.time()
+                    print(f"\n⚠️  ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
+                    continue
+                if (cabine.tarefa()[0] or a.tarefa) != frase:
+                    continue
+                etapa["sims"] = etapa["sims"] + 1 if r.get("sim") else 0
+                print(f"\n🧠 ER-1 ({r.get('ms')} ms): {q} -> {r.get('resposta')} ({etapa['sims']}/2)", flush=True)
+                if etapa["sims"] >= 2:             # duas vezes SIM seguidas: a etapa aconteceu
+                    etapa["i"] += 1
+                    etapa["sims"] = 0
+                    fala.diz(dito, "ER-1")
+                continue
             if not frase or time.time() - falhou < 60:
                 continue
             # (02/10: pedir "o que está fazendo" só repetia a tarefa; pedir o PASSO atual descreve a cena)
@@ -639,10 +687,7 @@ def main():
                  "your hands and the objects? In one short first-person sentence (max 12 words), describe the current "
                  "step, not the whole task.")
             try:
-                url = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 32})
-                r = json.loads(urllib.request.urlopen(url, timeout=15).read())
-                if r.get("erro"):
-                    raise RuntimeError(r["erro"])
+                r = pergunta(q, True)
                 texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
                 if texto and not r.get("erro") and (cabine.tarefa()[0] or a.tarefa) == frase:
                     k, agora = chave(texto), time.time()
