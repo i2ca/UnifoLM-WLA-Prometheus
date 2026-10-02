@@ -203,7 +203,7 @@ def main():
     ap.add_argument("--servidor", default="ws://127.0.0.1:8600",
                     help="servidor oficial do WLA já carregado (sobe_wla_servidor.sh); 'processo' = carrega aqui")
     ap.add_argument("--sem-pose-inicial", action="store_true", help="começa da pose atual (fora da distribuição)")
-    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao", "gravacao_aberta"], default="inicial",
+    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao", "gravacao_aberta", "coador"], default="inicial",
                     help="inicial = coluna reta e mãos afastadas (~49 cm, 30/09); elevada = a do dataset com o "
                          "ombro 0,35 rad mais alto e tronco 10° à frente; dataset = a mediana do início dos episódios Dex1; maca = a do início dos 50 episódios do nosso dataset da maçã (use com o modelo afinado); gravacao = braços abertos fora da cena (a do botão do painel, 01/10 — use com modelos treinados com episódios que começam nela)")
     ap.add_argument("--cintura-reta", action="store_true",
@@ -233,6 +233,9 @@ def main():
                     help="cm (z da mão na pelvis): PISO — a mão nunca é mandada abaixo disto. Use quando a mesa estiver "
                          "mais alta que no dataset (ex.: maçã gravada na caixa a ~-3 cm, mesa da caneca ~10 cm mais alta: "
                          "--z-min 5)")
+    ap.add_argument("--segura-mao-dir", type=float, default=0.0,
+                    help="0..1: antes de ligar o modelo, espera você pôr o objeto na mão direita e fecha até este "
+                         "fechamento (tarefas que começam segurando: --pose coador --segura-mao-dir 0.9)")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
@@ -327,7 +330,7 @@ def main():
     alvo = {i: float(inicio[i]) for i in list(CINTURA) + list(BRACOS)}
     q_ini = inicio.copy()
     if not a.sem_pose_inicial:
-        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao", "gravacao_aberta": "_gravacao_aberta"}[a.pose]
+        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao", "gravacao_aberta": "_gravacao_aberta", "coador": "_coador"}[a.pose]
         q_ini[BRACO["left"]] = POSE_JUNTAS["left" + suf]
         q_ini[BRACO["right"]] = POSE_JUNTAS["right" + suf]
         if not a.cintura_reta:
@@ -427,6 +430,33 @@ def main():
         erro = max(abs(est.q(i) - q_ini[i]) for i in BRACOS)
         print(f"   pose inicial atingida (maior erro medido {erro:.2f} rad).", flush=True)
     partida = dict(alvo)
+
+    # ── OBJETO NA MÃO antes de começar (02/10): tarefas que começam SEGURANDO algo (caneca -> coador). ──
+    # O braço fica na pose; você põe o objeto na mão direita, Enter, e a mão fecha com a força limitada
+    # (--kp-mao/--folga-mao) até --segura-mao-dir do fechamento — como no início dos episódios do dataset.
+    if a.segura_mao_dir > 0 and not a.ensaio:
+        import threading as _th
+        _para = _th.Event()
+        _fecha = [0.0]
+
+        def _segura():
+            while not _para.is_set():
+                envia()
+                envia_maos_fig6d({"left": np.zeros(6), "right": np.full(6, _fecha[0])})
+                time.sleep(0.02)
+
+        _th.Thread(target=_segura, daemon=True).start()
+        input("   🤲 Ponha o objeto na MÃO DIREITA do robô e aperte Enter para ela fechar... ")
+        for u in np.linspace(0, 1, 40):          # fecha em ~2 s
+            _fecha[0] = float(u * a.segura_mao_dir)
+            time.sleep(0.05)
+        time.sleep(1.0)
+        q_m = maos.q.get("right")
+        print(f"   🤲 mão direita fechada (fig6d medido {np.round(dex3_para_fig6d(q_m, 'right'), 2) if q_m is not None else '?'})",
+              flush=True)
+        input("   Objeto firme? Enter para ligar o modelo... ")
+        _para.set()
+        time.sleep(0.05)
 
     arq = open(a.log, "w", newline="")
     log = csv.writer(arq)
