@@ -236,6 +236,9 @@ def main():
     ap.add_argument("--segura-mao-dir", type=float, default=0.0,
                     help="0..1: antes de ligar o modelo, espera você pôr o objeto na mão direita e fecha até este "
                          "fechamento (tarefas que começam segurando: --pose coador --segura-mao-dir 0.9)")
+    ap.add_argument("--assenta", type=float, default=3.0,
+                    help="s: antes de seguir o modelo, segura a pose de partida com o integrador corrigindo o peso do "
+                         "braço (0 desliga)")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
@@ -625,13 +628,33 @@ def main():
           f"{a.peso_rot}", flush=True)
     stats = {}
     try:
+        avisou_assenta = [False]
         t_ini = time.time()
-        while time.time() - t_ini < a.segundos:
+        while time.time() - t_ini < a.segundos + a.assenta:
             tc = time.time()
             if not seguro("no laço de controle"):
                 return
             if erro_consulta[0] is not None:
                 raise RuntimeError(f"consulta à rede falhou: {erro_consulta[0]}")
+            # ASSENTAR (02/10): nos primeiros --assenta s o braço só segura a pose de partida e o integrador corrige
+            # o peso (com a caneca na mão o braço cedia ~10 cm sob o kp 40 da ponte; na teleoperação era 80). Os
+            # trechos que chegam nesse tempo são descartados — o modelo começa com a mão onde o dataset começa.
+            if tc - t_ini < a.assenta:
+                with trava:
+                    novo_trecho[0] = None
+                if not avisou_assenta[0]:
+                    print(f"   ⏳ assentando o braço {a.assenta:.0f} s (integrador corrigindo o peso) antes de seguir o modelo",
+                          flush=True)
+                    avisou_assenta[0] = True
+                aplica_integrador()
+                envia()
+                time.sleep(max(0.0, dt - (time.time() - tc)))
+                continue
+            if avisou_assenta[0] is True:
+                ee_d = fk.pose(q29(), "right")[1]
+                print(f"   ✅ assentado: mão direita em {np.round(ee_d * 100, 1)} cm (alvo da partida "
+                      f"{np.round(mao_part['right'] * 100, 1)} cm) — seguindo o modelo", flush=True)
+                avisou_assenta[0] = "feito"
             with trava:
                 chegou, novo_trecho[0] = novo_trecho[0], None
             if chegou is not None:
