@@ -192,6 +192,10 @@ def main():
     ap.add_argument("--braco-esquerdo", choices=["parado", "ativo"], default="ativo",
                     help="parado = o braço esquerdo fica na pose inicial (só a MÃO abre/fecha) — o punho esquerdo do "
                          "Prometheus está travado e, sem ele, a IK levava o braço para cima e para trás (29/09)")
+    ap.add_argument("--zona-morta-cm", type=float, nargs=2, default=[3.0, 0.0], metavar=("ESQ", "DIR"),
+                    help="cm: se o modelo pede a mão a menos disto do ponto SEGURADO, ela fica parada (0 desliga). "
+                         "02/10 (rodada 131051): o modelo pede a mão esquerda ~1 cm abaixo da MEDIDA a cada consulta; "
+                         "ancorado na medida isso somava e o braço descia 35 cm em 25 s, sem o integrador agir")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
@@ -647,6 +651,7 @@ def main():
           f"{fc * 100:.0f} cm para cima | mãos a ≥ {a.mao_mao_min * 100:.0f} cm uma da outra | peso da orientação "
           f"{a.peso_rot}", flush=True)
     stats = {}
+    segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
         avisou_assenta = [False]
         t_ini = time.time()
@@ -735,11 +740,20 @@ def main():
                         alvo[12] = float(alvo[12] + np.clip(yaw - alvo[12], -a.passo_max_rad, a.passo_max_rad))
                         stats["yaw"] = yaw
                     q_ik[12] = float(est.q(12))
-                    alvos_p = {}
+                    alvos_p, vs = {}, {}
                     for l in ("left", "right"):
                         R0, p0 = atual["base"][l]
                         Rm, pm = atual["medida"][l]
                         v = ponto("ee_rpy", l)
+                        # ZONA MORTA: pedido a menos de --zona-morta-cm do ponto segurado = ficar onde está
+                        # (alvo parado -> o integrador corrige o peso); só um pedido maior move a mão
+                        zm = a.zona_morta_cm[0 if l == "left" else 1] / 100
+                        if zm > 0:
+                            if segurado[l] is not None and np.linalg.norm(v[:3] - segurado[l][0]) < zm:
+                                v = segurado[l][1]
+                            else:
+                                segurado[l] = (v[:3].copy(), v.copy())
+                        vs[l] = v
                         # alvo = onde a IA quer a mão (absoluto, pelvis) + compensação FIXA do peso;
                         # com escala < 1, só essa fração do caminho a partir da mão medida
                         desejo = pm + a.escala * (v[:3] - pm) + comp[l]
@@ -759,9 +773,11 @@ def main():
                     for l in lados_ativos:
                         R0, p0 = atual["base"][l]
                         Rm, pm = atual["medida"][l]
-                        v = ponto("ee_rpy", l)
+                        v = vs[l]
                         p_alvo = alvos_p[l]
                         R_alvo = Rm @ expvec(a.escala * rotvec(Rm.T @ R_de(v[3:6])))   # absoluto, a partir do MEDIDO
+                        if segurado[l] is not None and v is segurado[l][1]:
+                            R_alvo = R_de(v[3:6])   # segurando: a orientação também não anda com a medida
                         # a mão comandada não salta: no máximo --passo-max-cm por passo
                         _, p_cmd, _ = fk.pose_jac(q_ik, l)
                         dp = p_alvo - p_cmd
