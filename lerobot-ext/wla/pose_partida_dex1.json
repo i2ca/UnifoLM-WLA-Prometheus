@@ -105,29 +105,29 @@
  ],
  "maca": "mediana do 1\u00ba quadro dos 50 epis\u00f3dios de maca_x_preto_2026-09-30 (o dataset do fine-tuning Dex3): m\u00e3os esq (24.8, 30.0, -1.5) cm e dir (37.8, -22.3, 6.9) cm da pelvis, cintura pitch 0,165",
  "left_gravacao": [
-  -0.5272,
-  0.8661,
-  0.5403,
-  0.093,
-  -0.6121,
-  0.5529,
-  -0.9126
+  -0.7454,
+  1.0384,
+  0.3919,
+  0.8143,
+  -0.0516,
+  -0.1821,
+  0.1864
  ],
  "right_gravacao": [
-  -0.6548,
-  -0.9813,
-  -0.4578,
-  0.2102,
-  0.5181,
-  0.3709,
-  1.0987
+  -0.7381,
+  -1.0468,
+  -0.388,
+  0.8155,
+  0.0462,
+  -0.1853,
+  -0.1786
  ],
  "cintura_gravacao": [
   0.0,
   0.0,
   0.0
  ],
- "gravacao": "01/10 noite: pose de grava\u00e7\u00e3o = a pose INICIAL (coluna reta) com cada m\u00e3o ~4,5 cm mais para fora (esq. y 29,4, dir. y -28,6 cm; z 33,5 / 37 cm; x 31 cm); o pitch do punho esquerdo (cal\u00e7ado) n\u00e3o muda",
+ "gravacao": "02/10: bot\u00e3o 'Pose de grava\u00e7\u00e3o' do painel = bra\u00e7os ABERTOS e levantados, fora da cena (a mesma de gravacao_aberta, em que come\u00e7am os datasets da caneca e do coador); a pose inicial \u00e9 a outra",
  "left_gravacao_aberta": [
   -0.7454,
   1.0384,
