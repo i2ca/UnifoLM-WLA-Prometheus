@@ -11,7 +11,7 @@
 # (1 x 8 acumulado), mas a GPU trabalha cheia: com 1 por vez ela ficava em ~21% de uso (30/09).
 cd "${UNIFOLM_WLA:-$HOME/DEV/unifolm-wla}"   # clone do unifolm-wla com os configs deste repo (instala_treino.sh)
 export CUDA_VISIBLE_DEVICES=${GPU:-0}
-export NCCL_ASYNC_ERROR_HANDLING=1 NCCL_TIMEOUT=10000 NCCL_SOCKET_TIMEOUT_MS=360000 WANDB_MODE=disabled
+export NCCL_ASYNC_ERROR_HANDLING=1 NCCL_TIMEOUT=10000 NCCL_SOCKET_TIMEOUT_MS=360000 WANDB_MODE=${WANDB_MODE:-disabled}   # WANDB_MODE=online: curvas ao vivo no wandb
 base_model_dir=playground/Pretrained_models/UnifoLM-WLA-1.0-Base
 config_yaml=./unifolm_wla/config/training/lora_prometheus_dex3.yaml
 data_config_path=${DADOS:-./unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_dex3.yaml}
