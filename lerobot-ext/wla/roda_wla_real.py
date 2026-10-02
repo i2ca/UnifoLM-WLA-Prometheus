@@ -204,8 +204,9 @@ def main():
     ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="roll e pitch da cintura (alvo 0 = coluna reta, como na gravação). 02/10: com 150/5 o pitch "
                          "ficava 0,08-0,16 rad à frente e o roll/pitch esquentou até a cintura ceder; a gravação usou 300/8")
-    ap.add_argument("--temp-tronco", type=float, default=65.0,
-                    help="°C: acima disto no roll/pitch da cintura avisa e SEGURA a posição (cabine 'parar')")
+    ap.add_argument("--temp-tronco", type=float, default=0.0,
+                    help="°C: acima disto no roll/pitch da cintura SEGURA a posição (cabine 'parar'); 0 = não segura, "
+                         "só avisa a partir de 60 °C (padrão, 02/10)")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
@@ -825,11 +826,11 @@ def main():
             if tc - t_temp[0] > 2.0:
                 t_temp[0] = tc
                 temps = [_temp(est.low["motor_state"][i]) for i in CINTURA[1:]]
-                if max(temps) >= a.temp_tronco and cabine.tarefa()[0]:
+                if a.temp_tronco > 0 and max(temps) >= a.temp_tronco and cabine.tarefa()[0]:
                     print(f"\n🌡️  cintura roll/pitch a {temps} °C (limite {a.temp_tronco:.0f}): SEGURANDO a posição. "
                           "Deixe esfriar; mande a tarefa de novo na cabine.", flush=True)
                     cabine.define_tarefa("")
-                elif max(temps) >= a.temp_tronco - 8 and tc - t_temp[1] > 30:
+                elif max(temps) >= (a.temp_tronco - 8 if a.temp_tronco > 0 else 60.0) and tc - t_temp[1] > 30:
                     t_temp[1] = tc
                     print(f"\n⚠️  cintura roll/pitch esquentando: {temps} °C", flush=True)
             envia()   # sempre: sem trecho novo, segura o último alvo (o arm_sdk nunca fica mudo)
