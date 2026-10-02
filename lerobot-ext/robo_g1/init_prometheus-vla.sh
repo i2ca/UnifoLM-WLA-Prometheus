@@ -16,9 +16,9 @@ USE_LOCO=true
 USE_PANICO=true
 # Limites da v3 (só valem com USE_PANICO=true)
 VEL_BRACO=0.3     # rad/s máx. do alvo de braço
-KP_BRACO=40       # teto de kp de ombro/cotovelo (a classe do LeRobot manda 80). Era 20: com os braços
+KP_BRACO=80       # 02/10: 80 = o mesmo da teleoperação/gravação (com 40 o braço cedia 10+ cm e o executor descia o braço).  teto de kp de ombro/cotovelo (a classe do LeRobot manda 80). Era 20: com os braços
                   # esticados à frente o braço caía ~12 cm (teste do WLA, 29/09)
-KP_PUNHO=20       # teto de kp de punho (a classe manda 40). Era 10: o punho não segurava o pitch com o braço esticado (29/09)
+KP_PUNHO=40       # 02/10: 40 = o mesmo da gravação.  teto de kp de punho (a classe manda 40). Era 10: o punho não segurava o pitch com o braço esticado (29/09)
 VEL_MAO=5.0       # rad/s máx. dos dedos Dex3. Era 1,0 (padrão da v3): a mão levava ~1,5 s para fechar (30/09)
 VOLUME=100        # volume da fala "Warning. Pose locked."
 VOLUME_BIP=50     # bipe de emergência enquanto o cogumelo está apertado (0-100)
