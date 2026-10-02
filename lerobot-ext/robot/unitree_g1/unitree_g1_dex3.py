@@ -348,6 +348,23 @@ class UnitreeG1Dex3(UnitreeG1):
                         data = msg_json.get("data", {})
                         side = data.get("side", "")
                         sensors = data.get("press_sensor_state", [])
+
+                        # POSIÇÃO DAS JUNTAS (02/10): o ChannelSubscriber de ZMQ só implementa rt/lowstate — o ramo das
+                        # mãos ficou dentro de um bloco comentado e Read() devolvia None. Resultado: TODOS os datasets
+                        # até 02/10 gravaram as juntas da Dex3 como 0 (maçã, caneca, coador). A mesma mensagem da 6002
+                        # (ponte: handstate_to_dict, ordem do SDK) traz o motor_state — lido aqui.
+                        ms = data.get("motor_state") or []
+                        if side in ("left", "right") and len(ms) >= 7:
+                            idxs = Dex3_1_Left_JointIndex if side == "left" else Dex3_1_Right_JointIndex
+                            atual = self._left_hand_state if side == "left" else self._right_hand_state
+                            novo = HandState()
+                            for idx, joint_id in enumerate(idxs):
+                                novo.motor_state[idx].q = float(ms[int(joint_id)].get("q", 0.0))
+                            novo.pressure = atual.pressure if atual is not None else np.zeros(33, dtype=np.float32)
+                            if side == "left":
+                                self._left_hand_state = novo
+                            else:
+                                self._right_hand_state = novo
                         
                         if sensors:
                             # Achata a lista como o LeRobot exige

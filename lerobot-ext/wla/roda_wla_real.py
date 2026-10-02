@@ -239,6 +239,10 @@ def main():
     ap.add_argument("--assenta", type=float, default=3.0,
                     help="s: antes de seguir o modelo, segura a pose de partida com o integrador corrigindo o peso do "
                          "braço (0 desliga)")
+    ap.add_argument("--dedos-estado", choices=["zero", "medido"], default="zero",
+                    help="o que vai ao modelo como estado dos dedos: zero = como nos datasets gravados até 02/10 (as "
+                         "juntas da Dex3 saíram 0 por um defeito da gravação); medido = a posição real (modelos "
+                         "treinados com datasets gravados depois da correção)")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
@@ -488,7 +492,10 @@ def main():
                "observation.state.lower_body": q[:15].astype(np.float32), "instruction": frase}
         if dex3:
             for l in ("left", "right"):
-                obs[f"observation.state.{l}_fig6d"] = dex3_para_fig6d(maos.q.get(l, np.zeros(7)), l)
+                # --dedos-estado zero: os datasets até 02/10 gravaram as juntas da Dex3 como 0 (defeito no
+                # unitree_sdk2_socket) — os modelos treinados com eles nunca viram outro valor de dedo no estado.
+                obs[f"observation.state.{l}_fig6d"] = (np.zeros(6, np.float32) if a.dedos_estado == "zero"
+                                                       else dex3_para_fig6d(maos.q.get(l, np.zeros(7)), l))
         # Os DOIS punhos ou nenhum: o servidor oficial rotula as imagens pela ORDEM
         # (WBC_IMAGE_ROLES[:n]); só o direito seria rotulado como cam_wrist_left.
         if punhos and all(c.rgb is not None and time.time() - c.t < 0.5 for c in punhos.values()):
