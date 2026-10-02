@@ -8,7 +8,7 @@ devolve a resposta. Cada pergunta fica salva em ~/er1_perguntas/ (imagem + respo
 
     GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left][&livre=1]
         -> {"resposta": "yes", "sim": true, "ms": 850, "imagem": ".../0003.jpg", "cru": "..."}
-        (sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
+        (&max=N limita o tamanho da resposta livre; sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
     GET /ultima.jpg    a imagem da última pergunta
 
     cd ~/DEV/unifolm-wla && ~/miniforge3/envs/wla/bin/python \\
@@ -78,7 +78,7 @@ def main():
     trava = threading.Lock()
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
-    def pergunta(q, cam, livre):
+    def pergunta(q, cam, livre, max_tokens=120):
         bgr, t = cams.bgr.get(cam), cams.t.get(cam, 0)
         if bgr is None or time.time() - t > 2.0:
             return {"erro": f"sem imagem recente da câmera '{cam}' (chegando: {sorted(cams.bgr)})"}
@@ -92,7 +92,7 @@ def main():
                                                return_tensors="pt").to(modelo.device)
             tq = time.perf_counter()
             with torch.inference_mode():
-                saida = modelo.generate(**entrada, max_new_tokens=8 if not livre else 120, do_sample=False)
+                saida = modelo.generate(**entrada, max_new_tokens=8 if not livre else max_tokens, do_sample=False)
             ms = round((time.perf_counter() - tq) * 1000)
             cru = proc.decode(saida[0, entrada["input_ids"].shape[1]:], skip_special_tokens=True).strip()
             estado["n"] += 1
@@ -123,7 +123,8 @@ def main():
             u = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(u.query)
             if u.path == "/pergunta" and qs.get("q"):
-                r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1")
+                r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1",
+                             int(qs.get("max", ["120"])[0]))
                 return self._manda(json.dumps(r, ensure_ascii=False).encode(), "application/json")
             if u.path == "/ultima.jpg" and estado["ultima"]:
                 return self._manda(Path(estado["ultima"]).read_bytes(), "image/jpeg")

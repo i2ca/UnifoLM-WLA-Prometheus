@@ -183,9 +183,15 @@ def main():
     ap.add_argument("--caixa", type=float, default=0.0,
                     help="caixa POR JUNTA em volta da pose de partida (rad; 0 = desligada, só os limites do URDF). "
                          "Travava o braço esquerdo em 4 juntas quando a IA pedia para descer (29/09)")
-    ap.add_argument("--caixa-mao", type=float, nargs=4, default=[0.25, 0.30, 0.30, 0.15],
+    ap.add_argument("--caixa-mao", type=float, nargs=4, default=[0.25, 0.40, 0.50, 0.15],
                     metavar=("FRENTE_TRAS", "LADOS", "BAIXO", "CIMA"),
-                    help="caixa em volta da MÃO na pose de partida, em metros: ±frente/trás, ±lados, baixo, cima")
+                    help="caixa em volta da MÃO na pose de partida, em metros: ±frente/trás, ±lados, baixo, cima. "
+                         "02/10: era 0,30 para baixo e para os lados — na maçã (mesa baixa) a mão direita parava em "
+                         "z 6 cm com o modelo pedindo 2-3 cm, e em y -20 (limite -18)")
+    ap.add_argument("--narra", default="http://127.0.0.1:8098",
+                    help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
+                         "cabeça com a tarefa atual ('' desliga)")
+    ap.add_argument("--narra-s", type=float, default=10.0, help="segundos entre as narrações do ER-1")
     ap.add_argument("--peso-rot", type=float, default=0.15,
                     help="peso da orientação da mão na IK (posição = 1). Era 0,5: segurar a inclinação travava a descida")
     ap.add_argument("--mao-mao-min", type=float, default=0.08, help="distância lateral mínima entre as mãos (m)")
@@ -595,26 +601,39 @@ def main():
     desde = {"left": None, "right": None}
     ultimo_aviso = {"left": 0.0, "right": 0.0}
 
+    # NARRAÇÃO pelo ER-1 (02/10): no lugar de "Grasping/Releasing", a cada --narra-s o ER-1 olha a câmera da
+    # cabeça e diz numa frase curta o que o robô está fazendo na tarefa atual (thread própria: nunca atrasa o controle).
+    def laco_narra():
+        import urllib.parse
+        import urllib.request
+        falhou = 0.0
+        while not pare.is_set():
+            time.sleep(a.narra_s)
+            frase = cabine.tarefa()[0] or a.tarefa
+            if not frase or time.time() - falhou < 60:
+                continue
+            q = (f'You are a humanoid robot. Your task is: "{frase}" This image is from your head camera. '
+                 "In one short sentence (at most 12 words), in first person, say what you are doing right now.")
+            try:
+                url = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 32})
+                r = json.loads(urllib.request.urlopen(url, timeout=15).read())
+                texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
+                if texto and not r.get("erro") and (cabine.tarefa()[0] or a.tarefa) == frase:
+                    print(f"\n🗣️  ER-1 ({r.get('ms')} ms): {texto}", flush=True)
+                    fala.diz(texto)
+            except Exception as e:  # noqa: BLE001
+                falhou = time.time()
+                print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
+
+    if fala is not None and a.narra:
+        threading.Thread(target=laco_narra, daemon=True, name="narra").start()
+
     def narra(frase, fech):
         if fala is None:
             return
         if frase and frase not in anunciadas:
             anunciadas.add(frase)
             fala.diz("I will " + frase[0].lower() + frase[1:])
-        agora = time.time()
-        for l, c in fech.items():
-            if c is None:
-                continue
-            quer_fechada = c > 0.7 if not fechada[l] else c > 0.3
-            if quer_fechada == fechada[l]:
-                desde[l] = None
-                continue
-            desde[l] = desde[l] or agora
-            if agora - desde[l] >= 1.0:
-                fechada[l], desde[l] = quer_fechada, None
-                if agora - ultimo_aviso[l] >= 6.0:
-                    ultimo_aviso[l] = agora
-                    fala.diz(f"{'Grasping' if quer_fechada else 'Releasing'} with the {l} hand.")
     dt = 1.0 / a.hz
     atual, q_ik, usados = None, None, 0
     anterior, t_troca = None, 0.0
