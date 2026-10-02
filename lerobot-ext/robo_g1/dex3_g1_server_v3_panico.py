@@ -334,7 +334,11 @@ class Trava:
                 q = _limita(prev, alvo, self.a.vel_braco * dt)
                 mc[i]["q"] = q
                 mc[i]["dq"] = 0.0
-                mc[i]["tau"] = 0.0
+                # tau = compensação da GRAVIDADE do braço (02/10, como o gravity_compensation do LeRobot),
+                # limitada a --tau-max-braco / --tau-max-punho (0 = zera, como antes); cintura: sempre 0
+                tmax = ((self.a.tau_max_punho if i in IDX_PUNHOS else self.a.tau_max_braco)
+                        if i in IDX_BRACOS else 0.0)
+                mc[i]["tau"] = max(-tmax, min(tmax, float(mc[i].get("tau", 0.0))))
                 self.q_env[i] = q
                 if i in IDX_BRACOS:
                     teto = self.a.kp_punho if i in IDX_PUNHOS else self.a.kp_braco
@@ -837,6 +841,9 @@ def main():
     parser.add_argument("--vel-braco", type=float, default=0.3, help="rad/s máx. do alvo de braço e yaw da cintura")
     parser.add_argument("--kp-braco", type=float, default=20.0, help="teto de kp: ombros e cotovelos (padrão da classe: 80)")
     parser.add_argument("--kp-punho", type=float, default=10.0, help="teto de kp: punhos (padrão da classe: 40)")
+    parser.add_argument("--tau-max-braco", type=float, default=0.0,
+                        help="Nm: teto do tau (compensação da gravidade) de ombro/cotovelo vindo do PC; 0 = zera")
+    parser.add_argument("--tau-max-punho", type=float, default=0.0, help="Nm: idem para os punhos")
     parser.add_argument("--vel-mao", type=float, default=1.0, help="rad/s máx. dos dedos Dex3")
     parser.add_argument("--kp-mao", type=float, default=1.0, help="teto de kp dos dedos Dex3")
     parser.add_argument("--gpio-entrada", default="PCC.03", help="GPIO6 da Unitree (pino 130 do NX)")

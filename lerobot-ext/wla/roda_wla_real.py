@@ -197,7 +197,12 @@ def main():
     ap.add_argument("--braco-esquerdo", choices=["parado", "ativo"], default="ativo",
                     help="parado = o braço esquerdo fica na pose inicial (só a MÃO abre/fecha) — o punho esquerdo do "
                          "Prometheus está travado e, sem ele, a IK levava o braço para cima e para trás (29/09)")
-    ap.add_argument("--zona-morta-cm", type=float, nargs=2, default=[3.0, 0.0], metavar=("ESQ", "DIR"),
+    ap.add_argument("--gravidade", type=float, default=1.0,
+                    help="compensação da GRAVIDADE dos braços (fator do torque do modelo do G1, 0 desliga; 02/10, como "
+                         "o gravity_compensation do LeRobot). A ponte só deixa passar com TAU_MAX_* > 0 no init")
+    ap.add_argument("--massa-punho", type=float, default=0.15,
+                    help="kg no punho fora do URDF (D435 + suporte), para a compensação da gravidade")
+    ap.add_argument("--zona-morta-cm", type=float, nargs=2, default=[0.0, 0.0], metavar=("ESQ", "DIR"),
                     help="cm: se o modelo pede a mão a menos disto do ponto SEGURADO, ela fica parada (0 desliga). "
                          "02/10 (rodada 131051): o modelo pede a mão esquerda ~1 cm abaixo da MEDIDA a cada consulta; "
                          "ancorado na medida isso somava e o braço descia 35 cm em 25 s, sem o integrador agir")
@@ -392,9 +397,28 @@ def main():
           f"{'  [ENSAIO: nada é enviado]' if a.ensaio else ''}", flush=True)
     input("   Fruta (e prato) na frente do robô? Mão no cogumelo. Enter para começar... ")
 
+    # COMPENSAÇÃO DA GRAVIDADE (02/10): torque que segura o peso do braço na pose COMANDADA, com a gravidade
+    # vinda da IMU da pelvis. Conferido no robô parado: ombros/cotovelos a ~10% do tau_est medido.
+    extra_punho = {l: (a.massa_punho, (0.05, 0.0, 0.04)) for l in ("left", "right")}
+
+    def tau_gravidade():
+        if a.gravidade <= 0:
+            return None
+        q = q29()
+        for i in BRACOS:
+            q[i] = alvo[i]
+        r, p_ = est.low["imu_state"]["rpy"][:2]
+        cr, sr, cp, sp = np.cos(r), np.sin(r), np.cos(p_), np.sin(p_)
+        g = np.array([[cp, sp * sr, sp * cr], [0, cr, -sr], [-sp, cp * sr, cp * cr]]).T @ np.array([0, 0, -9.81])
+        tau = a.gravidade * fk.gravidade(q, g, extra_punho)
+        for i in a.juntas_travadas:   # junta travada (punho esquerdo danificado) não faz força
+            tau[i] = 0.0
+        return tau
+
     def envia():
         if not a.ensaio:
-            cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5, *a.kp_tronco)).encode("utf-8"))
+            cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5, *a.kp_tronco,
+                                               tau=tau_gravidade())).encode("utf-8"))
 
     fech_mao = {"left": None, "right": None}
 

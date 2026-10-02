@@ -83,7 +83,8 @@ def modo_da_ponte(ctx, robo, timeout=3.0):
         s.close()
 
 
-def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_punho, kp_tronco=150.0, kd_tronco=5.0):
+def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_punho, kp_tronco=150.0, kd_tronco=5.0,
+              tau=None):
     """Comando de 35 motores igual ao da classe UnitreeG1Dex3 em modo loco.
     kp_tronco/kd_tronco = roll e pitch da cintura. 02/10: com 150/5 o pitch ficava 0,08-0,16 rad à frente
     (o WBC puxa contra) e o roll/pitch esquentou até ceder; na gravação (300/8) ficou em 0,03 rad."""
@@ -93,7 +94,8 @@ def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_pun
         mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
     for i in BRACOS:
         kp, kd = (kp_punho, kd_punho) if i in PUNHOS else (kp_braco, kd_braco)
-        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
+        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd,
+                 "tau": 0.0 if tau is None else float(tau[i])}   # tau = compensação da gravidade (a ponte limita)
     mc[PESO_ARM_SDK]["q"] = 1.0   # arm_sdk: o WBC obedece a este cliente nos braços
     return {"topic": "rt/arm_sdk",
             "data": {"mode_pr": 1, "mode_machine": int(estado.low.get("mode_machine", 0)), "motor_cmd": mc}}

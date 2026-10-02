@@ -19,6 +19,8 @@ VEL_BRACO=0.3     # rad/s máx. do alvo de braço
 KP_BRACO=80       # 02/10: 80 = o mesmo da teleoperação/gravação (com 40 o braço cedia 10+ cm e o executor descia o braço).  teto de kp de ombro/cotovelo (a classe do LeRobot manda 80). Era 20: com os braços
                   # esticados à frente o braço caía ~12 cm (teste do WLA, 29/09)
 KP_PUNHO=40       # 02/10: 40 = o mesmo da gravação.  teto de kp de punho (a classe manda 40). Era 10: o punho não segurava o pitch com o braço esticado (29/09)
+TAU_MAX_BRACO=10  # 02/10: Nm, teto da compensação da GRAVIDADE que o executor manda (ombro/cotovelo); 0 = desliga
+TAU_MAX_PUNHO=3   # 02/10: Nm, idem nos punhos
 VEL_MAO=5.0       # rad/s máx. dos dedos Dex3. Era 1,0 (padrão da v3): a mão levava ~1,5 s para fechar (30/09)
 VOLUME=100        # volume da fala "Warning. Pose locked."
 VOLUME_BIP=50     # bipe de emergência enquanto o cogumelo está apertado (0-100)
@@ -95,7 +97,7 @@ sleep 1
 # 5. Inicia o Servidor da Mão + Corpo (Dex3 Bridge) em background (&)
 if [ "$USE_PANICO" = "true" ]; then
     PONTE=$PROJECT_DIR/dex3_g1_server_v3_panico.py
-    EXTRA="--vel-braco $VEL_BRACO --kp-braco $KP_BRACO --kp-punho $KP_PUNHO --vel-mao $VEL_MAO --volume $VOLUME --volume-bip $VOLUME_BIP"
+    EXTRA="--vel-braco $VEL_BRACO --kp-braco $KP_BRACO --kp-punho $KP_PUNHO --tau-max-braco $TAU_MAX_BRACO --tau-max-punho $TAU_MAX_PUNHO --vel-mao $VEL_MAO --volume $VOLUME --volume-bip $VOLUME_BIP"
     NOME="v3 (PÂNICO GPIO4/GPIO6)"
 else
     PONTE=$PROJECT_DIR/dex3_g1_server_v2.py

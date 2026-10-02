@@ -54,6 +54,18 @@ class FK:
                 "lim": (float(lim.get("lower")), float(lim.get("upper"))) if lim is not None else (-np.pi, np.pi)}
         self.idx = {n: i for i, n in enumerate(NOMES)}
         self.cadeia = {lado: self._cadeia(f"{lado}_wrist_yaw_link") for lado in ("left", "right")}
+        # massas (para a compensação da gravidade): link -> (kg, centro de massa no referencial do link)
+        self.massa = {}
+        for ln in raiz.findall("link"):
+            ine = ln.find("inertial")
+            if ine is None or ine.find("mass") is None:
+                continue
+            o = ine.find("origin")
+            c = np.array([float(v) for v in (o.get("xyz", "0 0 0") if o is not None else "0 0 0").split()])
+            self.massa[ln.get("name")] = (float(ine.find("mass").get("value")), c)
+        self.filhos = {}
+        for filho, j in self.junta_do_filho.items():
+            self.filhos.setdefault(j["pai"], []).append(filho)
         por_nome = {j["nome"]: j for j in self.junta_do_filho.values()}
         self.lo = np.array([por_nome[n]["lim"][0] for n in NOMES])
         self.hi = np.array([por_nome[n]["lim"][1] for n in NOMES])
@@ -95,6 +107,69 @@ class FK:
             J[:3, i] = np.cross(z, pe - o)
             J[3:, i] = z
         return R, pe, J
+
+    def gravidade(self, q29, g_pelvis=(0.0, 0.0, -9.81), extra=None):
+        """Torque (Nm, 29) que cada junta dos BRAÇOS (15-28) faz para segurar o peso do braço + mão
+        na pose q29 (o rnea com velocidade 0 do gravity_compensation do LeRobot, em numpy).
+        g_pelvis = gravidade no referencial da pelvis (da IMU); extra = {lado: (kg, xyz no
+        wrist_yaw_link)} para o que não está no URDF (câmera/suporte no punho, objeto na mão)."""
+        g = np.asarray(g_pelvis, float)
+        tau = np.zeros(29)
+        for lado in ("left", "right"):
+            raiz_link = self.cadeia[lado][0]["pai"]          # torso (depois da cintura)
+            # pose de todos os links do braço (dedos em 0), da raiz do ombro para baixo
+            R0, p0 = np.eye(3), np.zeros(3)
+            for j in self.cadeia[lado]:
+                if j["nome"] == f"{lado}_shoulder_pitch_joint":
+                    break
+                p0 = p0 + R0 @ j["p"]
+                R0 = R0 @ j["R"]
+                if j["tipo"] in ("revolute", "continuous") and j["nome"] in self.idx:
+                    R0 = R0 @ _eixo(j["eixo"], q29[self.idx[j["nome"]]])
+            ombro = self.cadeia[lado][[j["nome"] for j in self.cadeia[lado]].index(f"{lado}_shoulder_pitch_joint")]
+            pilha = [(ombro["pai"], R0, p0)]
+            poses, eixos = {}, {}
+            while pilha:
+                link, R, p = pilha.pop()
+                for filho in self.filhos.get(link, []):
+                    j = self.junta_do_filho[filho]
+                    if link == ombro["pai"] and filho != f"{lado}_shoulder_pitch_link":
+                        continue
+                    pj = p + R @ j["p"]
+                    Rj = R @ j["R"]
+                    if j["tipo"] in ("revolute", "continuous"):
+                        if j["nome"] in self.idx:
+                            eixos[filho] = (self.idx[j["nome"]], Rj @ (j["eixo"] / np.linalg.norm(j["eixo"])), pj)
+                        Rj = Rj @ _eixo(j["eixo"], q29[self.idx[j["nome"]]] if j["nome"] in self.idx else 0.0)
+                    poses[filho] = (Rj, pj)
+                    pilha.append((filho, Rj, pj))
+            # massas abaixo de cada junta: soma de m*(c - o) x g, projetada no eixo
+            cms = []
+            for link, (R, p) in poses.items():
+                if link in self.massa:
+                    m, c = self.massa[link]
+                    cms.append((link, m, p + R @ c))
+            if extra and lado in extra:
+                m, c = extra[lado]
+                R, p = poses[f"{lado}_wrist_yaw_link"]
+                cms.append((f"{lado}_wrist_yaw_link", m, p + R @ np.asarray(c, float)))
+            for filho, (i, z, o) in eixos.items():
+                abaixo = self._descendentes(filho)
+                t = sum((np.cross(c - o, m * g) for ln, m, c in cms if ln in abaixo), np.zeros(3))
+                tau[i] = -float(z @ t)
+        return tau
+
+    def _descendentes(self, link):
+        if not hasattr(self, "_desc"):
+            self._desc = {}
+        if link not in self._desc:
+            d, pilha = {link}, [link]
+            while pilha:
+                for f in self.filhos.get(pilha.pop(), []):
+                    d.add(f)
+                    pilha.append(f)
+            self._desc[link] = d
+        return self._desc[link]
 
     def ik(self, q29, lado, R_alvo, p_alvo, iters=30, amort=1e-4, peso_rot=0.5, lo=None, hi=None,
            q_repouso=None, peso_repouso=0.0):
