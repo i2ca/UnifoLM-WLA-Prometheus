@@ -29,6 +29,7 @@ Painel: a cabine http://<pgx>:8090 (câmera, trajetória prevista x executada, b
 import argparse
 import csv
 import json
+import re
 import logging
 import os
 import sys
@@ -192,6 +193,8 @@ def main():
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
     ap.add_argument("--narra-s", type=float, default=10.0, help="segundos entre as narrações do ER-1")
+    ap.add_argument("--narra-repete-s", type=float, default=60.0,
+                    help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
                     help="peso da orientação da mão na IK (posição = 1). Era 0,5: segurar a inclinação travava a descida")
     ap.add_argument("--mao-mao-min", type=float, default=0.08, help="distância lateral mínima entre as mãos (m)")
@@ -607,6 +610,13 @@ def main():
         import urllib.parse
         import urllib.request
         falhou = 0.0
+        ditas = {}   # frase normalizada -> quando foi dita (02/10: repetia "Reach for the white mug" a cada 10 s)
+
+        def chave(t):
+            t = re.sub(r"[^a-z ]", "", t.lower())
+            t = re.sub(r"\b(\w+)ing\b", r"\1", t)          # reaching == reach
+            return " ".join(w for w in t.split() if w not in ("i", "am", "the", "a", "an", "is", "on", "my"))
+
         while not pare.is_set():
             time.sleep(a.narra_s)
             frase = cabine.tarefa()[0] or a.tarefa
@@ -621,8 +631,13 @@ def main():
                 r = json.loads(urllib.request.urlopen(url, timeout=15).read())
                 texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
                 if texto and not r.get("erro") and (cabine.tarefa()[0] or a.tarefa) == frase:
-                    print(f"\n🗣️  ER-1 ({r.get('ms')} ms): {texto}", flush=True)
-                    fala.diz(texto)
+                    k, agora = chave(texto), time.time()
+                    repetida = agora - ditas.get(k, -1e9) < a.narra_repete_s
+                    print(f"\n{'🔇' if repetida else '🗣️ '} ER-1 ({r.get('ms')} ms): {texto}"
+                          f"{' (repetida, calada)' if repetida else ''}", flush=True)
+                    if not repetida:
+                        ditas[k] = agora
+                        fala.diz(texto)
             except Exception as e:  # noqa: BLE001
                 falhou = time.time()
                 print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
