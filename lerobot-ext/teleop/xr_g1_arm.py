@@ -751,6 +751,25 @@ class XRG1Arm(Teleoperator):
         else:
             x = self._hud_badge(img, x, y, "SEM GRAVACAO", self._HUD_CINZA)
 
+        # 2b) Episódios (02/10): o atual, quantos já estão salvos e o total (se houver limite), e o aviso
+        #     grande de SALVANDO / SALVO / DESCARTADO — `hud_gravacao` vem do init_lerobot_record_v2.py.
+        hg = getattr(main_mod, "hud_gravacao", None) if gravando else None
+        if hg and hg.get("salvos") is not None:
+            total = hg.get("total")
+            txt = f"EP {hg.get('ep') or '-'}  |  SALVOS {hg['salvos']}" + (f"/{total}" if total else "")
+            if hg.get("fase") == "arrumar":
+                txt += "  |  ARRUMAR"
+            x = self._hud_badge(img, x, y, txt, self._HUD_BRANCO)
+        if hg and hg.get("aviso") and (hg.get("fase") == "salvando" or time.time() - hg.get("t_aviso", 0) < 3.0):
+            cor = {"verde": self._HUD_VERDE, "vermelho": self._HUD_VERMELHO}.get(hg.get("cor"), self._HUD_AMARELO)
+            fonte, escala, espessura = cv2.FONT_HERSHEY_DUPLEX, 1.3, 2
+            (tw, th), _ = cv2.getTextSize(hg["aviso"], fonte, escala, espessura)
+            cx, cy = (w - tw) // 2, int(h * 0.80)
+            overlay = img.copy()
+            cv2.rectangle(overlay, (cx - 22, cy - th - 16), (cx + tw + 22, cy + 18), (20, 22, 28), -1)
+            cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
+            cv2.putText(img, hg["aviso"], (cx, cy), fonte, escala, cor, espessura, cv2.LINE_AA)
+
         # 3) Andando: o operador precisa saber que os pés estão se movendo,
         #    porque a janela da cabeça mostra a cena passando de qualquer jeito.
         if self._loco_moving:

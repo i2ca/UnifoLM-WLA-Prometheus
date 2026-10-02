@@ -4,8 +4,25 @@ Tudo roda no **notebook**, no ambiente `prometheus-vla`, dentro de `lerobot-ext/
 
 ```bash
 python init_lerobot_teleoparate_v2.py --config_path=config/teleop/teleop_vr_wla.yaml          # só teleop (treino)
-python init_lerobot_record_v2.py --config_path=config/record/record_vr_wla_copo_branco.yaml   # gravar
+python init_lerobot_record_v2.py --config_path=config/record/record_vr_wla_pegar_caneca.yaml  # gravar
 ```
+
+### Datasets da cena mista (02/10)
+
+Todos os objetos ficam na mesa em todos os episódios, para o modelo escolher a tarefa pela **frase**. Os configs
+não têm limite de episódios: termine com ESC ou a voz "finalizar". Para continuar um dataset outro dia,
+acrescente `--resume=true`. Os configs antigos (uma cena por tarefa) estão em `config/record/old/`.
+
+| Config | Frase | Começa |
+|---|---|---|
+| `record_vr_wla_pegar_caneca.yaml` | Pick up the white mug. | mão vazia |
+| `record_vr_wla_caneca_no_x.yaml` | Place the white mug on the black X. | caneca na mão direita |
+| `record_vr_wla_caneca_no_coador.yaml` | Place the white mug under the coffee strainer. | caneca na mão direita |
+| `record_vr_wla_pegar_maca.yaml` | Pick up the apple. | mão vazia |
+| `record_vr_wla_maca_no_x.yaml` | Place the apple on the black X. | maçã na mão direita |
+
+O HUD do VR mostra `EP n | SALVOS k` (e `ARRUMAR` no tempo de arrumar a cena) e um aviso grande quando o
+episódio está **SALVANDO**, foi **SALVO**, **DESCARTADO** ou saiu **VAZIO**.
 
 No óculos (Quest), abra a página HTTPS que o terminal mostrar, aceite o certificado e entre no modo VR.
 

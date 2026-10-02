@@ -436,6 +436,14 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 _fase = {"atual": None, "pular_reset": False}
 _orig_record_loop = _lr.record_loop
 
+# HUD DA GRAVAÇÃO (02/10): o XRG1Arm lê `__main__.hud_gravacao` e mostra no VR o episódio atual, quantos já
+# foram salvos e o aviso grande de SALVANDO / SALVO / DESCARTADO / VAZIO.
+hud_gravacao = {"ep": None, "salvos": None, "total": None, "fase": None, "aviso": None, "cor": None, "t_aviso": 0.0}
+
+
+def _hud_aviso(texto, cor):
+    hud_gravacao.update(aviso=texto, cor=cor, t_aviso=time.time())
+
 
 def _record_loop_fase(*args, **kw):
     fase = "episodio" if kw.get("dataset") is not None else "arrumar"
@@ -447,6 +455,11 @@ def _record_loop_fase(*args, **kw):
     if ev is not None:
         ev["exit_early"] = False
     _fase["atual"] = fase
+    ds = kw.get("dataset")
+    if ds is not None:
+        hud_gravacao.update(ep=ds.num_episodes + 1, salvos=ds.num_episodes)
+        print(f"\n   🎬 GRAVANDO episódio {ds.num_episodes + 1} ({ds.num_episodes} já salvos)", flush=True)
+    hud_gravacao["fase"] = fase
     try:
         return _orig_record_loop(*args, **kw)
     finally:
@@ -467,6 +480,7 @@ def _evento_gravacao(tipo):
     if tipo == "discard":
         ev["rerecord_episode"] = True
         print("\n   ❌ DESCARTANDO este episódio e recomeçando...", flush=True)
+        _hud_aviso(f"EP {hud_gravacao.get('ep') or '?'} DESCARTADO", "vermelho")
     else:
         print("\n   ✅ SALVANDO e indo para o próximo..." if fase == "episodio"
               else "\n   ✅ fim do tempo de arrumar — salvando...", flush=True)
@@ -492,9 +506,23 @@ def _save_episode_7(self, *a, **k):
     tem = p() if callable(p) else p
     if tem is False:
         print("   ⚠️ episódio sem nenhum quadro — descartado (não salvo)", flush=True)
+        _hud_aviso("EPISODIO VAZIO - NAO SALVO", "vermelho")
         self.clear_episode_buffer()
         return
-    return _orig_save_episode_7(self, *a, **k)
+    n = self.num_episodes + 1
+    hud_gravacao["fase"] = "salvando"
+    _hud_aviso(f"SALVANDO EP {n}...", "amarelo")
+    print(f"   💾 SALVANDO episódio {n}...", flush=True)
+    t0 = time.time()
+    try:
+        r = _orig_save_episode_7(self, *a, **k)
+    except Exception:
+        _hud_aviso(f"ERRO AO SALVAR EP {n}", "vermelho")
+        raise
+    hud_gravacao.update(salvos=self.num_episodes, fase=None)
+    _hud_aviso(f"EP {n} SALVO  ({self.num_episodes} no total)", "verde")
+    print(f"   ✅ episódio {n} SALVO em {time.time() - t0:.1f} s — {self.num_episodes} no dataset", flush=True)
+    return r
 
 
 LeRobotDataset.save_episode = _save_episode_7

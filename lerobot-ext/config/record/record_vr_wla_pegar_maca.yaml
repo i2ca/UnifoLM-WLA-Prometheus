@@ -1,0 +1,96 @@
+# GRAVAÇÃO (02/10) — PEGAR a MAÇÃ e levantá-la. Termine segurando a maçã no ar, longe da mesa.
+#
+# Frase: "Pick up the apple."
+#
+#   cd lerobot-ext
+#   conda activate prometheus-vla
+#   python init_lerobot_record_v2.py --config_path=config/record/record_vr_wla_pegar_maca.yaml
+#   (continuar o mesmo dataset outro dia: acrescente --resume=true)
+#
+# CENA MISTA (o motivo destes 5 datasets): TODOS os objetos ficam na mesa nova em todos os episódios —
+# caneca branca, maçã, X preto, coador (e o resto que estiver lá). Só assim o modelo aprende a escolher
+# a tarefa pela FRASE; com uma cena por tarefa ele decidia pela imagem (02/10: "pegar caneca" foi na maçã).
+# Varie a posição dos objetos entre episódios (10–20 cm) e comece sempre na pose de gravação do painel.
+#
+# SEM LIMITE de episódios (num_episodes enorme): grave quantos quiser e termine com ESC ou a voz "finalizar".
+# O HUD do VR mostra o episódio atual, quantos já foram salvos e quando está SALVANDO / SALVO.
+# A salva o episódio, B descarta.
+
+robot:
+  type: unitree_g1_dex3
+  robot_ip: "192.168.123.164"
+  use_loco: true
+  use_waist_yaw: true
+  waist_yaw_limit: 1.0
+  cameras_wla: true
+  cameras_wla_estereo: true
+  gravar_locomocao: true      # base.vx/vy/vyaw/height no vetor de ação: registra se o robô andou
+  gravar_pernas_cintura: true # estado: 12 juntas das pernas + roll/pitch da cintura MEDIDOS (lower_body do WLA)
+  cintura_reta: true          # coluna RETA: roll/pitch da cintura seguros em 0 (kp/kd 300/8), não onde o peso deixar
+  use_depth_camera: false
+  use_wrist_camera: false
+
+teleop:
+  type: xr_g1_arm
+  zmq: true
+  img_server_ip: "192.168.123.164"
+  input_mode: "controller"
+  display_mode: "ego"
+  ee_type: "dex3"
+  dashboard: true
+  dashboard_port: 8080
+  vuer_host_ip: ""
+  head_cam_size: 1.0
+  head_cam_distance: 1.5
+  show_hud: true
+
+  stereo_head: false   # 3D ficou ruim (30/09): tela 2D com o olho esquerdo da ZED
+  # pitch do punho ESQUERDO com a peça danificada e calçado (01/10): a IK não usa essa junta e a mantém
+  # neste ângulo (sem isso o yaw do punho ficava pulando). Confira o ângulo no painel :8095; tire a linha
+  # quando o punho for consertado.
+  juntas_fixas: {left_wrist_pitch_joint: 0.33}
+  head_cam_keys: ["head_stereo_left", "head_stereo_right"]
+
+  torso_follows_head: true
+  torso_head_gain: 1.0
+  torso_max_speed: 0.8
+  torso_head_deadzone: 0.05
+  waist_yaw_limit: 1.0
+  waist_invert: false
+  head_yaw_lock: true
+
+  enable_locomotion: true
+  loco_style: "original"
+  loco_port: 6005
+  loco_ip: ""
+  loco_max_speed: 0.3
+  loco_max_lateral: 0.2
+  loco_max_yaw: 0.5
+  loco_deadzone: 0.2
+  loco_no_dataset: true       # manda o comando de andar para o dataset (precisa do gravar_locomocao do robô)
+
+  # painel da câmera do punho direito, que segue a sua mão (agora na 5555, chave wrist_right)
+  show_wrist_cam: true
+  wrist_img_port: 5555
+  wrist_cam_name: "wrist_right"
+  wrist_cam_side: "right"
+  wrist_cam_size: 0.10
+  wrist_cam_offset: [0.0, -0.14, 0.0]
+
+dataset:
+  repo_id: Mrwlker/pegar_maca_mesa_nova
+  root: "meu_dataset/pegar_maca_mesa_nova"
+  push_to_hub: false
+  # Vídeos encodados DURANTE o episódio (o salvar fica rápido). Se o laço de gravação ficar lento no
+  # notebook, troque para false — o controle do robô continua vivo no salvar de qualquer jeito (injeção 6).
+  streaming_encoding: true
+  encoder_threads: 2
+  single_task: "Pick up the apple."
+  fps: 30
+  num_episodes: 100000   # sem limite: termine com ESC ou a voz "finalizar"
+  episode_time_s: 30
+  reset_time_s: 15
+  rgb_encoder:
+    vcodec: "h264"
+
+play_sounds: false
