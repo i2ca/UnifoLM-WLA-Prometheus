@@ -310,6 +310,13 @@ def main():
     sw.sobe(cabine, a.porta)
     cabine.define_tarefa(a.tarefa)
     cabine.atalhos = [tuple(x.split("=", 1)) for x in a.atalhos]
+    if a.narra:   # botão PT-BR do histórico de falas: o ER-1 traduz (já desde o começo, 02/10)
+        def _traduz(texto):
+            import urllib.parse
+            import urllib.request
+            url = f"{a.narra}/traduz?" + urllib.parse.urlencode({"t": texto})
+            return json.loads(urllib.request.urlopen(url, timeout=30).read())["pt"]
+        cabine.tradutor = _traduz
     cabine.publica_estado({"modo": "carregando o WLA-1.0 ..."})
     cam = sw.Camera(a.robo, 5555, cabine, "head_camera" if a.cabeca == "cor" else "head_stereo_left")
     # Punhos: como no treino (cabeça + punho esq. + punho dir.). Entram só se estiverem chegando.
@@ -603,13 +610,6 @@ def main():
     fala = Falador(a.robo, a.voz) if a.voz != "nenhuma" else None
     if fala is not None:
         fala.ao_falar = cabine.registra_fala   # histórico na cabine (02/10)
-    if a.narra:
-        def _traduz(texto):
-            import urllib.parse
-            import urllib.request
-            url = f"{a.narra}/traduz?" + urllib.parse.urlencode({"t": texto})
-            return json.loads(urllib.request.urlopen(url, timeout=30).read())["pt"]
-        cabine.tradutor = _traduz
     # Fala SEM poluir: cada tarefa é anunciada uma vez; "pegando/soltando" só depois de a mão ficar
     # fechada (ou aberta) por >= 1 s, e cada mão espera 6 s entre avisos — a garra do WLA abre e fecha
     # rápido, e antes cada tremida virava uma frase.

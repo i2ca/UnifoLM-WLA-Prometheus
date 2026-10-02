@@ -355,12 +355,12 @@ PAGINA = """<!doctype html>
   <canvas id="pred" width="1200" height="300"
           style="width:100%;max-width:1400px;background:#171717;border:1px solid #2a2a2a;border-radius:4px"></canvas>
 </section>
-<section id="falas" style="display:none;padding:8px 14px;background:#141414;border-bottom:1px solid #2a2a2a">
+<section id="falas" style="padding:8px 14px;background:#141414;border-bottom:1px solid #2a2a2a">
   <div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">
     <b>🗣 o que o robô falou</b>
     <button type="button" id="traduz-tudo" onclick="traduzTudo()" style="padding:3px 10px">🇧🇷 traduzir tudo</button>
   </div>
-  <div id="falas-lista" style="max-height:220px;overflow-y:auto"></div>
+  <div id="falas-lista" style="max-height:220px;overflow-y:auto;color:#777">nada falado ainda — as falas do robô (tarefa e narração do ER-1) aparecem aqui</div>
 </section>
 <main id="cams"></main>
 <pre id="estado">carregando…</pre>
@@ -392,9 +392,8 @@ function atalhos(e) {
 let falasVistas = '';
 function falas(e) {
   const lista = e.falas || [];
-  if (!lista.length) return;
-  document.getElementById('falas').style.display = '';
   document.getElementById('traduz-tudo').style.display = e.tradutor ? '' : 'none';
+  if (!lista.length) return;
   const chave = JSON.stringify(lista.map(f => [f.i, f.pt]));
   if (chave === falasVistas) return;
   falasVistas = chave;
