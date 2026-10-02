@@ -6,7 +6,7 @@ Para checar se uma tarefa foi CONCLUÍDA olhando a imagem (ex.: "Is the white cu
 strainer?"). Pega o quadro mais novo da câmera (cameras_wla_server, porta 5555), pergunta ao ER-1 e
 devolve a resposta. Cada pergunta fica salva em ~/er1_perguntas/ (imagem + resposta).
 
-    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left[,wrist_right]][&livre=1]
+    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left[,wrist_right]][&livre=1][&escala=0.5]
         -> {"resposta": "yes", "sim": true, "ms": 850, "imagem": ".../0003.jpg", "cru": "..."}
         (&max=N limita o tamanho da resposta livre; sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
     GET /traduz?t=<texto>   tradução para PT-BR (só texto)
@@ -98,7 +98,7 @@ def main():
     trava = threading.Lock()
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
-    def pergunta(q, cam, livre, max_tokens=120):
+    def pergunta(q, cam, livre, max_tokens=120, escala=1.0):
         # cam pode ser várias, separadas por vírgula (02/10: cabeça + punho direito para a narração): vão em ordem
         bgrs = []
         for c in cam.split(","):
@@ -109,6 +109,8 @@ def main():
                 print(f"[ER-1] {r['erro']}", flush=True)
                 return r
             bgrs.append(b)
+        if escala != 1.0:   # imagem menor = menos tokens = o ER-1 disputa menos a GPU com o WLA (02/10)
+            bgrs = [cv2.resize(b, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA) for b in bgrs]
         rgbs = [b if a.rgb else cv2.cvtColor(b, cv2.COLOR_BGR2RGB) for b in bgrs]
         bgr = np.hstack([cv2.resize(b, (bgrs[0].shape[1], bgrs[0].shape[0])) for b in bgrs])   # só para salvar
         texto = q if livre else f"{q}\nLook carefully at the image. Answer only yes or no."
@@ -166,7 +168,7 @@ def main():
             qs = urllib.parse.parse_qs(u.query)
             if u.path == "/pergunta" and qs.get("q"):
                 r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1",
-                             int(qs.get("max", ["120"])[0]))
+                             int(qs.get("max", ["120"])[0]), float(qs.get("escala", ["1"])[0]))
                 return self._manda(json.dumps(r, ensure_ascii=False).encode(), "application/json")
             if u.path == "/traduz" and qs.get("t"):
                 return self._manda(json.dumps(traduz(qs["t"][0]), ensure_ascii=False).encode(), "application/json")
