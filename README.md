@@ -56,13 +56,16 @@ tivemos está lá, com a causa e a correção.
 ## Datasets (Hugging Face, públicos)
 
 Gravados por teleoperação VR no G1 + Dex3, com a ZED na cabeça e duas D435 nos punhos (640x480, 30 fps),
-em formato LeRobot v3.0.
+em formato LeRobot v3.0. Os da **cena mista** (02/10) têm todos os objetos na mesa em todos os episódios
+(o modelo escolhe a tarefa pela frase) e o estado da Dex3 medido de verdade (nos de 30/09–01/10 ele saiu 0).
 
 | Dataset | Tarefa (frase) | Episódios | Quadros |
 |---|---|---|---|
 | [Mrwlker/maca_x_preto_2026-09-30](https://huggingface.co/datasets/Mrwlker/maca_x_preto_2026-09-30) | Pick up the apple and place it on the black X. | 50 | 27 569 |
 | [Mrwlker/copo_branco_2026-10-01](https://huggingface.co/datasets/Mrwlker/copo_branco_2026-10-01) | Pick up the white mug. | 47 | 9 533 |
 | [Mrwlker/copo_no_coador_2026-10-01](https://huggingface.co/datasets/Mrwlker/copo_no_coador_2026-10-01) | Place the white mug under the coffee strainer. | 50 | 15 531 |
+| [Mrwlker/pegar_caneca_mesa_nova_2026-10-02](https://huggingface.co/datasets/Mrwlker/pegar_caneca_mesa_nova_2026-10-02) | Pick up the white mug. *(cena mista, mesa nova)* | 55 | 21 355 |
+| [Mrwlker/pegar_maca_mesa_nova_2026-10-02](https://huggingface.co/datasets/Mrwlker/pegar_maca_mesa_nova_2026-10-02) | Pick up the apple. *(cena mista, mesa nova)* | 52 | 25 008 |
 
 ```bash
 huggingface-cli download Mrwlker/copo_branco_2026-10-01 --repo-type dataset --local-dir lerobot-ext/meu_dataset/copo_branco_2026-10-01
