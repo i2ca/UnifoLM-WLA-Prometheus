@@ -195,10 +195,11 @@ def main():
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
-    ap.add_argument("--peso-repouso", type=float, default=0.02,
-                    help="mola da IK puxando o braço para a postura inicial (0 desliga). 02/10: com 0 e o pitch do punho "
-                         "esquerdo travado, o braço derivava (ombro/punho até 3,4 rad em 60 pedidos simulados; no robô o "
-                         "cotovelo esquerdo ia para posição ruim); com 0,02 o desvio fica em ~0,24 rad")
+    ap.add_argument("--peso-repouso", type=float, default=0.005,
+                    help="mola da IK puxando o braço para a postura de partida (0 desliga). 02/10: com 0, nos alvos reais "
+                         "da rodada 20261002_105107 a IK do braço direito saltava até 0,47 rad entre passos e trocava de "
+                         "ramo (ombro roll -1,05 -> +0,54); com 0,005 o salto cai para ~0,27 rad com ~1 cm de erro na mão. "
+                         "Valores maiores seguram mais a postura, mas a mão erra mais o alvo (0,02: ~3 cm)")
     ap.add_argument("--servidor", default="ws://127.0.0.1:8600",
                     help="servidor oficial do WLA já carregado (sobe_wla_servidor.sh); 'processo' = carrega aqui")
     ap.add_argument("--sem-pose-inicial", action="store_true", help="começa da pose atual (fora da distribuição)")
