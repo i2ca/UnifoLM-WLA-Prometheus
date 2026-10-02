@@ -15,7 +15,8 @@
 #
 # SEM LIMITE de episódios (num_episodes enorme): grave quantos quiser e termine com ESC ou a voz "finalizar".
 # O HUD do VR mostra o episódio atual, quantos já foram salvos e quando está SALVANDO / SALVO.
-# A salva o episódio, B descarta.
+# Controle: A encerra e SALVA o episódio (B descarta); depois arrume a cena e aperte A para começar o próximo.
+# (episódio e tempo de arrumar de até 1 h: quem decide é você, no controle)
 
 robot:
   type: unitree_g1_dex3
@@ -89,8 +90,8 @@ dataset:
   single_task: "Place the apple on the black X."
   fps: 30
   num_episodes: 100000   # sem limite: termine com ESC ou a voz "finalizar"
-  episode_time_s: 40
-  reset_time_s: 15
+  episode_time_s: 3600   # 1 h: o episódio só acaba no A (salva) ou B (descarta)
+  reset_time_s: 3600     # 1 h: arrume a cena e aperte A para começar o próximo
   rgb_encoder:
     vcodec: "h264"
 

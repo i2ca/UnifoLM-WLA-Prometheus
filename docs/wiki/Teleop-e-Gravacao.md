@@ -21,7 +21,7 @@ acrescente `--resume=true`. Os configs antigos (uma cena por tarefa) estão em `
 | `record_vr_wla_pegar_maca.yaml` | Pick up the apple. | mão vazia |
 | `record_vr_wla_maca_no_x.yaml` | Place the apple on the black X. | maçã na mão direita |
 
-O HUD do VR mostra `EP n | SALVOS k` (e `ARRUMAR` no tempo de arrumar a cena) e um aviso grande quando o
+Episódio e tempo de arrumar vão até 1 h: **A** encerra e salva (B descarta), arrume a cena e **A** de novo começa o próximo. O HUD do VR mostra `EP n | SALVOS k` (e `ARRUMAR` no tempo de arrumar a cena) e um aviso grande quando o
 episódio está **SALVANDO**, foi **SALVO**, **DESCARTADO** ou saiu **VAZIO**.
 
 No óculos (Quest), abra a página HTTPS que o terminal mostrar, aceite o certificado e entre no modo VR.

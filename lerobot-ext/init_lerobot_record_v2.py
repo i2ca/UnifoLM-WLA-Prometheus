@@ -448,10 +448,25 @@ def _hud_aviso(texto, cor):
 def _record_loop_fase(*args, **kw):
     fase = "episodio" if kw.get("dataset") is not None else "arrumar"
     ev = kw.get("events")
-    if fase == "arrumar" and _fase["pular_reset"]:
+    if fase == "episodio":
+        _fase["ds"] = kw["dataset"]
+    if fase == "arrumar":
+        longo = float(kw.get("control_time_s") or 0) > 60
+        if _fase["pular_reset"] and not longo:
+            _fase["pular_reset"] = False
+            print("   ⏭️  tempo de arrumar pulado (salvar/descartar no episódio)", flush=True)
+            return
         _fase["pular_reset"] = False
-        print("   ⏭️  tempo de arrumar pulado (salvar/descartar no episódio)", flush=True)
-        return
+        # TEMPO DE ARRUMAR LONGO (02/10, configs sem limite): o operador arruma a cena e aperta A para começar o
+        # próximo. O lerobot só salva DEPOIS do tempo de arrumar; aqui o episódio é salvo JÁ, no começo dele,
+        # para o HUD mostrar SALVO enquanto se arruma (o save_episode do lerobot depois vira nada).
+        ds = _fase.get("ds")
+        if longo and ds is not None and ev is not None and not ev.get("rerecord_episode") \
+                and not ev.get("stop_recording"):
+            ds.save_episode()
+            _fase["salvo_cedo"] = True
+        if longo:
+            print("   🧹 ARRUME A CENA — aperte A (ou diga 'salvar') para começar o próximo episódio", flush=True)
     if ev is not None:
         ev["exit_early"] = False
     _fase["atual"] = fase
@@ -477,13 +492,17 @@ def _evento_gravacao(tipo):
     if fase is None:
         print(f"\n   ⏳ [{tipo}] ignorado: salvando o episódio anterior — espere começar o próximo", flush=True)
         return
+    if tipo == "discard" and fase == "arrumar" and _fase.get("salvo_cedo"):
+        print("\n   ⚠️ [descartar] este episódio JÁ foi salvo — descarte DURANTE o episódio (B antes do A)", flush=True)
+        _hud_aviso("JA SALVO - DESCARTE DURANTE O EPISODIO", "vermelho")
+        return
     if tipo == "discard":
         ev["rerecord_episode"] = True
         print("\n   ❌ DESCARTANDO este episódio e recomeçando...", flush=True)
         _hud_aviso(f"EP {hud_gravacao.get('ep') or '?'} DESCARTADO", "vermelho")
     else:
-        print("\n   ✅ SALVANDO e indo para o próximo..." if fase == "episodio"
-              else "\n   ✅ fim do tempo de arrumar — salvando...", flush=True)
+        print("\n   ✅ fim do episódio — salvando..." if fase == "episodio"
+              else "\n   ▶ começando o próximo episódio", flush=True)
     if fase == "episodio":
         _fase["pular_reset"] = True
     ev["exit_early"] = True
@@ -502,6 +521,9 @@ _orig_save_episode_7 = LeRobotDataset.save_episode
 
 
 def _save_episode_7(self, *a, **k):
+    if _fase.get("salvo_cedo"):          # já salvo no começo do tempo de arrumar
+        _fase["salvo_cedo"] = False
+        return
     p = getattr(self, "has_pending_frames", None)
     tem = p() if callable(p) else p
     if tem is False:

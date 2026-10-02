@@ -760,15 +760,20 @@ class XRG1Arm(Teleoperator):
             if hg.get("fase") == "arrumar":
                 txt += "  |  ARRUMAR"
             x = self._hud_badge(img, x, y, txt, self._HUD_BRANCO)
+        aviso, cor = None, None
         if hg and hg.get("aviso") and (hg.get("fase") == "salvando" or time.time() - hg.get("t_aviso", 0) < 3.0):
+            aviso = hg["aviso"]
             cor = {"verde": self._HUD_VERDE, "vermelho": self._HUD_VERMELHO}.get(hg.get("cor"), self._HUD_AMARELO)
+        elif hg and hg.get("fase") == "arrumar":
+            aviso, cor = "ARRUME A CENA  -  A = PROXIMO EPISODIO", self._HUD_AMARELO
+        if aviso:
             fonte, escala, espessura = cv2.FONT_HERSHEY_DUPLEX, 1.3, 2
-            (tw, th), _ = cv2.getTextSize(hg["aviso"], fonte, escala, espessura)
+            (tw, th), _ = cv2.getTextSize(aviso, fonte, escala, espessura)
             cx, cy = (w - tw) // 2, int(h * 0.80)
             overlay = img.copy()
             cv2.rectangle(overlay, (cx - 22, cy - th - 16), (cx + tw + 22, cy + 18), (20, 22, 28), -1)
             cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
-            cv2.putText(img, hg["aviso"], (cx, cy), fonte, escala, cor, espessura, cv2.LINE_AA)
+            cv2.putText(img, aviso, (cx, cy), fonte, escala, cor, espessura, cv2.LINE_AA)
 
         # 3) Andando: o operador precisa saber que os pés estão se movendo,
         #    porque a janela da cabeça mostra a cena passando de qualquer jeito.
