@@ -197,8 +197,8 @@ def main():
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
     ap.add_argument("--narra-s", type=float, default=8.0, help="segundos entre as narrações do ER-1")
-    ap.add_argument("--narra-cams", default="head_stereo_left,wrist_right",
-                    help="câmeras que o ER-1 vê na narração (cabeça + punho direito: vê se a mão pegou algo)")
+    ap.add_argument("--narra-cams", default="wrist_right",
+                    help="câmeras que o ER-1 vê para dizer o objeto mais perto da mão direita")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
@@ -246,6 +246,8 @@ def main():
     ap.add_argument("--gravar", default=str(Path.home() / "wla_real_runs"),
                     help="pasta onde cada rodada grava imagens + estado + resposta da IA por consulta ('' desliga)")
     ap.add_argument("--tempo-pose", type=float, default=10.0)
+    ap.add_argument("--tempo-volta", type=float, default=6.0,
+                    help="s: botão 'posição inicial' da cabine — volta devagar para a pose de partida e segura")
     ap.add_argument("--hz", type=float, default=20.0,
                     help="taxa de execução das ações (o dataset é 30 Hz; a 20 Hz um trecho de 30 passos dura 1,5 s, "
                          "mais que a demora da rede, e o movimento não para entre consultas)")
@@ -626,78 +628,67 @@ def main():
     # NARRAÇÃO pelo ER-1 (02/10): no lugar de "Grasping/Releasing", a cada --narra-s o ER-1 olha a câmera da
     # cabeça e diz numa frase curta o que o robô está fazendo na tarefa atual (thread própria: nunca atrasa o controle).
     def laco_narra():
-        """NARRAÇÃO (02/10): a cada --narra-s o ER-1 vê a cabeça + o punho direito e diz numa frase curta o que o
-        robô está fazendo e vendo. Recebe o que os SENSORES dizem (para onde cada mão andou, mão aberta/fechada)
-        e o que ele mesmo disse antes, para contar a evolução em vez de repetir a cena."""
-        import collections
+        """NARRAÇÃO SEM INVENTAR (02/10): a frase sai dos SENSORES — para onde a mão andou (juntas), dedos abertos,
+        fechando ou segurando algo (dedos mandados fechar mas parados antes = objeto na mão) — e o ER-1 só diz o
+        NOME do objeto mais perto da mão direita (câmera do punho; resposta de poucas palavras, ~0,3 s). A descrição
+        livre do ER-1 inventava ("I have picked up the white mug" com a mão parada e aberta). Repetir é permitido."""
         import urllib.parse
         import urllib.request
         falhou = 0.0
-        ditas = {}                                   # frase normalizada -> quando foi dita
-        historico = collections.deque(maxlen=5)      # o que o ER-1 disse nesta tarefa (dito ou calado)
         antes = {"frase": None, "p": None}
 
-        def chave(t):
-            t = re.sub(r"[^a-z ]", "", t.lower())
-            t = re.sub(r"\b(\w+)ing\b", r"\1", t)          # reaching == reach
-            return " ".join(w for w in t.split() if w not in ("i", "am", "the", "a", "an", "is", "on", "my"))
-
         def movimento(d):
-            """Deslocamento da mão (pelvis, m) -> palavras: 'moved down 8 cm and forward 5 cm' / 'stayed still'."""
             partes = []
-            for k, (pos, neg) in enumerate((("forward", "back"), ("to the left", "to the right"), ("up", "down"))):
+            for k, (pos, neg) in enumerate((("forward", "back"), ("left", "right"), ("up", "down"))):
                 if abs(d[k]) >= 0.02:
                     partes.append(f"{pos if d[k] > 0 else neg} {abs(d[k]) * 100:.0f} cm")
-            return "moved " + " and ".join(partes) if partes else "stayed still"
+            return ("moving my right hand " + ", ".join(partes)) if partes else "keeping my right hand still"
 
-        def mao(l):
+        def dedos(l):
             c = fech_mao.get(l)
-            return "unknown" if c is None else ("closed" if c > 0.6 else "open" if c < 0.3 else "half closed")
+            qm = maos.q.get(l)
+            if c is None:
+                return "fingers unknown"
+            medido = float(np.mean(dex3_para_fig6d(np.asarray(qm, float), l))) if qm is not None and len(qm) == 7 else None
+            if c > 0.6 and medido is not None and medido < c * a.fecha_max - 0.2:
+                return "holding something in my right hand"      # mandou fechar e os dedos pararam no objeto
+            if c > 0.6:
+                return "fingers closed, nothing in my hand"
+            if c > 0.3:
+                return "closing my fingers"
+            return "fingers open"
 
         while not pare.is_set():
             time.sleep(a.narra_s)
             frase = cabine.tarefa()[0] or a.tarefa
-            if not frase or time.time() - falhou < 60:
+            if not frase:
                 continue
-            q = q29()
-            p = {l: fk.pose(q, l)[1] for l in ("left", "right")}
-            if antes["frase"] != frase:              # tarefa nova: história nova
-                historico.clear()
+            p = fk.pose(q29(), "right")[1]
+            if antes["frase"] != frase:
                 antes.update(frase=frase, p=p)
-            sensores = "; ".join(f"{l} hand {movimento(p[l] - antes['p'][l])}, fingers {mao(l)}"
-                                 for l in ("right", "left"))
+            texto = f"{movimento(p - antes['p']).capitalize()}, {dedos('right')}"
             antes["p"] = p
-            ultima = historico[-1] if historico else None
-            prompt = (f'You are Prometheus, a humanoid robot. Task: "{frase}"\n'
-                      "Image 1: head camera. Image 2: right wrist camera.\n"
-                      f"Sensors (last {a.narra_s:.0f} s): {sensores}.\n"
-                      + (f'Your previous sentence was: "{ultima}". Do NOT repeat it; use different words and add '
-                         "something new.\n" if ultima else "")
-                      + "Rules: open fingers means you are NOT holding anything. Never say 'nothing new'.\n"
-                      "Reply with ONE short first-person sentence (max 15 words) about what you are doing now and "
-                      "what you see near your hand.")
-            try:
-                u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": prompt, "livre": 1, "max": 40,
-                                                                     "cam": a.narra_cams})
-                with gpu:
-                    r = json.loads(urllib.request.urlopen(u, timeout=20).read())
-                if r.get("erro"):
-                    raise RuntimeError(r["erro"])
-            except Exception as e:  # noqa: BLE001
-                falhou = time.time()
-                print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
+            if time.time() - falhou > 60:
+                try:
+                    q = ("What object is closest to the robot's right hand in these images? "
+                         "Answer with only the object name, at most 3 words, or 'nothing'.")
+                    u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 8,
+                                                                         "cam": a.narra_cams})
+                    with gpu:
+                        r = json.loads(urllib.request.urlopen(u, timeout=10).read())
+                    if r.get("erro"):
+                        raise RuntimeError(r["erro"])
+                    obj = re.sub(r"[^a-zA-Z ]", "", (r.get("cru") or "")).strip().lower()
+                    if obj and obj != "nothing" and len(obj.split()) <= 4:
+                        texto += f", near the {obj.removeprefix('the ').removeprefix('a ')}"
+                except Exception as e:  # noqa: BLE001
+                    falhou = time.time()
+                    print(f"\n⚠️  ER-1 indisponível ({a.narra}): {e} — narro só pelos sensores por 60 s", flush=True)
+            if (cabine.tarefa()[0] or a.tarefa) != frase:
                 continue
-            texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
-            if not texto or (cabine.tarefa()[0] or a.tarefa) != frase or "nothing new" in texto.lower():
-                continue
-            historico.append(texto)
-            k, agora = chave(texto), time.time()
-            repetida = agora - ditas.get(k, -1e9) < a.narra_repete_s
-            print(f"\n{'🔇' if repetida else '🗣️ '} ER-1 ({r.get('ms')} ms) [{sensores}]: {texto}"
-                  f"{' (repetida, calada)' if repetida else ''}", flush=True)
-            if not repetida:
-                ditas[k] = agora
-                fala.diz(texto, "ER-1")
+            texto += "."
+            print(f"\n🗣️  narração: {texto}", flush=True)
+            fala.diz(texto, "sensores+ER-1")
 
     if fala is not None and a.narra:
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
@@ -779,6 +770,7 @@ def main():
           f"{fc * 100:.0f} cm para cima | mãos a ≥ {a.mao_mao_min * 100:.0f} cm uma da outra | peso da orientação "
           f"{a.peso_rot}", flush=True)
     stats = {}
+    volta = None   # botão 'posição inicial' da cabine
     t_temp = [0.0, 0.0]
     segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
@@ -822,6 +814,24 @@ def main():
             if atual is not None and atual.get("seq") != seq_agora:
                 print(f"   ▶ nova tarefa: {frase_agora!r}", flush=True)
                 atual, anterior = None, None
+            # BOTÃO "POSIÇÃO INICIAL" da cabine (02/10): sem tarefa, os braços (e o yaw) voltam devagar à pose de partida
+            if cabine.consome_inicial():
+                cabine.define_tarefa("")
+                frase_agora, atual, anterior, chegou = "", None, None, None
+                volta = {"t0": tc, "de": {i: q_des[i] for i in BRACOS}, "yaw": alvo[12]}
+                print(f"\n   ↩ voltando à posição inicial ({a.tempo_volta:.0f} s)", flush=True)
+            if volta is not None:
+                if frase_agora:                    # chegou tarefa nova no meio: ela manda
+                    volta = None
+                else:
+                    u = min(1.0, (tc - volta["t0"]) / a.tempo_volta)
+                    sv = 0.5 - 0.5 * np.cos(np.pi * u)
+                    for i in BRACOS:
+                        q_des[i] = float(volta["de"][i] + sv * (partida[i] - volta["de"][i]))
+                    alvo[12] = float(volta["yaw"] + sv * (partida[12] - volta["yaw"]))
+                    if u >= 1.0:
+                        volta = None
+                        print("   ✅ na posição inicial — mande uma tarefa na cabine", flush=True)
             if chegou is not None:
                 if atual is not None:
                     _registra(atual, stats, log, t_ini, alvo, q29(), cabine, a, est, partida, fech_mao, usados)

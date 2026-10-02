@@ -70,6 +70,7 @@ class Cabine:
         self._tarefa_seq = 0
         self._parada = False
         self._pedido_copo = False
+        self._pedido_inicial = False
         self._objetos_pedidos = []
         self._clientes = 0
         # HISTÓRICO DO QUE O ROBÔ FALOU (02/10) e quem traduz para PT-BR (texto -> texto; o executor liga no ER-1)
@@ -162,6 +163,16 @@ class Cabine:
             v, self._objetos_pedidos = self._objetos_pedidos, []
             return v
 
+    def pede_inicial(self) -> None:
+        with self._trava:
+            self._pedido_inicial = True
+
+    def consome_inicial(self) -> bool:
+        """Verdadeiro UMA vez por clique no botão 'posição inicial' (o executor volta à pose de partida)."""
+        with self._trava:
+            v, self._pedido_inicial = self._pedido_inicial, False
+            return v
+
     def pede_copo(self) -> None:
         with self._trava:
             self._pedido_copo = True
@@ -231,6 +242,9 @@ class _Handler(BaseHTTPRequestHandler):
         caminho = self.path.split("?")[0]
         if caminho == "/parar":
             self.cabine.pede_parada()
+            return self._texto(json.dumps({"ok": True}), "application/json")
+        if caminho == "/inicial":
+            self.cabine.pede_inicial()
             return self._texto(json.dumps({"ok": True}), "application/json")
         if caminho == "/traduz":
             n = int(self.headers.get("Content-Length", 0))
@@ -353,6 +367,9 @@ PAGINA = """<!doctype html>
     <button type="button" onclick="fetch('parar',{method:'POST'})"
             title="o robô MANTÉM a posição em que está e espera outra tarefa (emergência: o cogumelo)"
             style="background:#5a2a2a;border-color:#8a3c3c">⏸ parar (mantém a posição)</button>
+    <button type="button" onclick="fetch('inicial',{method:'POST'})"
+            title="para a tarefa e volta devagar os braços para a posição de partida (a de gravação)"
+            style="background:#2a3d5a;border-color:#3c5a8a">↩ posição inicial</button>
     <span id="atalhos"></span>
     <button type="button" onclick="fetch('copo',{method:'POST'})" title="mesma coisa que a tecla ç na janela do MuJoCo">mudar xícara (ç)</button>
   </form>
