@@ -6,8 +6,8 @@ set -e
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WLA="${1:-$HOME/DEV/unifolm-wla}"
 test -d "$WLA/unifolm_wla" || { echo "não achei $WLA/unifolm_wla — clone o unifolm-wla primeiro"; exit 1; }
-ln -sf "$AQUI/lora_prometheus_dex3.yaml"   "$WLA/unifolm_wla/config/training/lora_prometheus_dex3.yaml"
-for f in prometheus_dex3.yaml prometheus_dex3_medido.yaml; do
+ln -sf "$AQUI/lora_prometheus_dex3.yaml" "$WLA/unifolm_wla/config/training/lora_prometheus_dex3.yaml"
+for f in "$AQUI"/prometheus_dex3*.yaml; do f=$(basename "$f")
     ln -sf "$AQUI/$f" "$WLA/unifolm_wla/dataloader/multi_source_dataset/configs/$f"
 done
 for f in treina_lora_prometheus_dex3.sh avalia_checkpoints_wla.py extrai_delta_lora.py testa_dados_wla.py; do

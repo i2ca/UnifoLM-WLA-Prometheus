@@ -1,0 +1,65 @@
+# 01/10 (noite): TRÊS TAREFAS — maçã no X, pegar a caneca, caneca embaixo do coador — tudo que está em
+# pasta por tarefa, cada uma com a sua frase). Ação = mão MEDIDA (converte_dataset_dex3_wla.py --acao medida).
+# Dados do Prometheus (G1 + Dex3, câmeras ZED + punhos) para fine-tuning do UnifoLM-WLA-1.0-Base (30/09).
+# Gerado por lerobot-ext/wla/converte_dataset_dex3_wla.py a partir da teleoperação VR.
+# Dex3 vai como fig6d (mão de dedos do WLA, 0..1), não como garra Dex1. Normalização: as estatísticas
+# pré-calculadas da Unitree (as colunas têm os mesmos nomes; fig6d deles já é 0..1).
+target_fps: 30
+chunk_size: 30
+image_size: [336, 448]
+norm_type: "minmax_q"
+rel_norm_type: "zscore"
+state_norm_type: "minmax_q"
+gripper_norm_type: "minmax_q"
+data_base: "/home/mrwlker/unifolm_data"   # TROQUE: pasta com os datasets convertidos na máquina de treino
+cache_dir: "/data/mrwlker/unifolm_cache_tres_tarefas"
+
+image_roles:
+  - "head_left"
+  - "cam_wrist_left"
+  - "cam_wrist_right"
+
+datasets:
+  - name: "Prometheus_G1_Dex3"
+    data_path: "Prometheus_G1_Dex3_Medido_Dataset/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.head_stereo_left"
+        role: "head_left"
+      - key: "observation.images.wrist_left"
+        role: "cam_wrist_left"
+      - key: "observation.images.wrist_right"
+        role: "cam_wrist_right"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3

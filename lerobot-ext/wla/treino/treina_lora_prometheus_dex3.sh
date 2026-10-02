@@ -5,6 +5,8 @@
 #   GPU=0 bash treina_lora_prometheus_dex3.sh        # log: playground/Checkpoints/<run_id>/treino.log
 #   GPU=0,2 NPROC=2 LOTE=4 PASSOS=8000 bash treina_lora_prometheus_dex3.sh   # 2 GPUs, lote efetivo 8
 #   ação = mão MEDIDA (01/10): DADOS=./unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_dex3_medido.yaml RUN_ID=lora_prometheus_dex3_maca_medido
+#   na PGX (GB10, flash-attn): ATENCAO=flash_attention_2 GPU=0 NPROC=1 ... bash treina_lora_prometheus_dex3.sh --trainer.save_interval 5000
+#   (argumentos extras vão para o train_unifolm_wla.py)
 # Lote: 8 amostras por passo de uma vez (LOTE=8, ACUMULA=1) — mesmo lote efetivo da receita da Unitree
 # (1 x 8 acumulado), mas a GPU trabalha cheia: com 1 por vez ela ficava em ~21% de uso (30/09).
 cd "${UNIFOLM_WLA:-$HOME/DEV/unifolm-wla}"   # clone do unifolm-wla com os configs deste repo (instala_treino.sh)
@@ -23,7 +25,7 @@ cp $0 ${run_root_dir}/${run_id}/
   unifolm_wla/training/train_unifolm_wla.py \
   --config_yaml ${config_yaml} \
   --framework.qwenvl.base_vlm ${base_model_dir}/tokenizer \
-  --framework.qwenvl.attn_implementation sdpa \
+  --framework.qwenvl.attn_implementation ${ATENCAO:-sdpa} \
   --trainer.pretrained_checkpoint ${base_model_dir}/checkpoints/model.safetensors \
   --datasets.vla_data.data_config_path ${data_config_path} \
   --datasets.vla_data.per_device_batch_size ${LOTE:-8} \
@@ -31,4 +33,4 @@ cp $0 ${run_root_dir}/${run_id}/
   --trainer.gradient_accumulation_steps ${ACUMULA:-1} \
   --trainer.max_train_steps ${PASSOS:-20000} \
   --run_root_dir ${run_root_dir} \
-  --run_id ${run_id} 2>&1 | tee ${run_root_dir}/${run_id}/treino.log
+  --run_id ${run_id} "$@" 2>&1 | tee ${run_root_dir}/${run_id}/treino.log
