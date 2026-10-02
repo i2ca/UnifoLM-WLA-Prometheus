@@ -27,4 +27,4 @@ fi
 
 cd "$UNIFOLM_WLA" || exit 1
 exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
-    --braco-esquerdo parado --juntas-travadas 20 "$@"
+    --braco-esquerdo ativo --juntas-travadas 20 "$@"
