@@ -230,6 +230,8 @@ def main():
                     help="cm (z da mão na pelvis): PISO — a mão nunca é mandada abaixo disto. Use quando a mesa estiver "
                          "mais alta que no dataset (ex.: maçã gravada na caixa a ~-3 cm, mesa da caneca ~10 cm mais alta: "
                          "--z-min 5)")
+    ap.add_argument("--mistura", type=float, default=6,
+                    help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
                     help="yaw = gira o tronco como o modelo pede (o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura onde está")
@@ -520,6 +522,7 @@ def main():
                     fala.diz(f"{'Grasping' if quer_fechada else 'Releasing'} with the {l} hand.")
     dt = 1.0 / a.hz
     atual, q_ik, usados = None, None, 0
+    anterior, t_troca = None, 0.0
     lados_ativos = ("right",) if a.braco_esquerdo == "parado" else ("left", "right")
     if a.braco_esquerdo == "parado":
         print("   braço ESQUERDO parado na pose inicial (só a mão esquerda abre/fecha)", flush=True)
@@ -601,6 +604,7 @@ def main():
             if chegou is not None:
                 if atual is not None:
                     _registra(atual, stats, log, t_ini, alvo, q29(), cabine, a, est, partida, fech_mao, usados)
+                anterior, t_troca = atual, tc   # suavização: o trecho que sai ainda conta nos primeiros passos
                 atual, usados = chegou, 0
                 stats = {"cortes": {"left": 0, "right": 0}, "erros": {"left": 0.0, "right": 0.0}, "fins": {},
                          "passo_inicial": None}
@@ -611,6 +615,28 @@ def main():
                 acao = atual["acao"]
                 T = min(a.acoes_por_chunk, acao["action.left_ee_rpy"].shape[1])
                 k = int((tc - atual["t_obs"]) * a.hz)
+                # SUAVIZAÇÃO entre trechos (02/10): cada consulta parte de ruído novo e, com o modelo pouco treinado,
+                # trechos seguidos discordam — a mão "pulava" na troca. Nos primeiros --mistura passos do trecho
+                # novo, a posição da mão e os dedos vão do trecho antigo (mesmo instante) ao novo, linearmente.
+                peso_novo, k_ant = 1.0, None
+                if a.mistura > 0 and anterior is not None:
+                    passos_desde = (tc - t_troca) * a.hz
+                    k_ant = int((tc - anterior["t_obs"]) * a.hz)
+                    if passos_desde < a.mistura and k_ant < anterior["acao"]["action.left_ee_rpy"].shape[1]:
+                        peso_novo = max(0.0, passos_desde / a.mistura)
+                    else:
+                        k_ant = None
+
+                def ponto(chave, l):
+                    v = np.array(acao[f"action.{l}_{chave}"][0][k], dtype=float)
+                    if k_ant is None or peso_novo >= 1.0:
+                        return v
+                    v_ant = np.asarray(anterior["acao"][f"action.{l}_{chave}"][0][k_ant], dtype=float)
+                    if chave == "ee_rpy":   # mistura só a posição; a orientação vem do trecho novo
+                        v[:3] = (1 - peso_novo) * v_ant[:3] + peso_novo * v[:3]
+                    else:
+                        v = (1 - peso_novo) * v_ant + peso_novo * v
+                    return v
                 if k < T:
                     if stats["passo_inicial"] is None:
                         stats["passo_inicial"] = k
@@ -626,7 +652,7 @@ def main():
                     for l in ("left", "right"):
                         R0, p0 = atual["base"][l]
                         Rm, pm = atual["medida"][l]
-                        v = acao[f"action.{l}_ee_rpy"][0][k]
+                        v = ponto("ee_rpy", l)
                         # alvo = onde a IA quer a mão (absoluto, pelvis) + compensação FIXA do peso;
                         # com escala < 1, só essa fração do caminho a partir da mão medida
                         desejo = pm + a.escala * (v[:3] - pm) + comp[l]
@@ -646,7 +672,7 @@ def main():
                     for l in lados_ativos:
                         R0, p0 = atual["base"][l]
                         Rm, pm = atual["medida"][l]
-                        v = acao[f"action.{l}_ee_rpy"][0][k]
+                        v = ponto("ee_rpy", l)
                         p_alvo = alvos_p[l]
                         R_alvo = Rm @ expvec(a.escala * rotvec(Rm.T @ R_de(v[3:6])))   # absoluto, a partir do MEDIDO
                         # a mão comandada não salta: no máximo --passo-max-cm por passo
@@ -675,7 +701,7 @@ def main():
                         for i in idx:
                             q_des[i] = float(q_ik[i])
                     if "action.left_fig6d" in acao:
-                        envia_maos_fig6d({l: acao[f"action.{l}_fig6d"][0][k] for l in ("left", "right")})
+                        envia_maos_fig6d({l: ponto("fig6d", l) for l in ("left", "right")})
                     else:
                         envia_maos({l: float(acao[f"action.{l}_gripper"][0][k, 0]) for l in ("left", "right")})
                     narra(atual["frase"], fech_mao)
