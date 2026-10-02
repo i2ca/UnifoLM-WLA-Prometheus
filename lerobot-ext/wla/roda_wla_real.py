@@ -612,8 +612,10 @@ def main():
             frase = cabine.tarefa()[0] or a.tarefa
             if not frase or time.time() - falhou < 60:
                 continue
-            q = (f'You are a humanoid robot. Your task is: "{frase}" This image is from your head camera. '
-                 "In one short sentence (at most 12 words), in first person, say what you are doing right now.")
+            # (02/10: pedir "o que está fazendo" só repetia a tarefa; pedir o PASSO atual descreve a cena)
+            q = (f'You are a humanoid robot doing the task: "{frase}". Look at this head camera image: where are '
+                 "your hands and the objects? In one short first-person sentence (max 12 words), describe the current "
+                 "step, not the whole task.")
             try:
                 url = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 32})
                 r = json.loads(urllib.request.urlopen(url, timeout=15).read())
