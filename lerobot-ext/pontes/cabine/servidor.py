@@ -72,6 +72,9 @@ class Cabine:
         self._pedido_copo = False
         self._objetos_pedidos = []
         self._clientes = 0
+        # HISTÓRICO DO QUE O ROBÔ FALOU (02/10) e quem traduz para PT-BR (texto -> texto; o executor liga no ER-1)
+        self._falas: list[dict[str, Any]] = []
+        self.tradutor = None
 
     # ── quem escreve: o laço de controle ────────────────────────────────
     def publica_quadro(self, camera: str, rgb: np.ndarray) -> None:
@@ -91,6 +94,25 @@ class Cabine:
         with self._trava:
             self._estado = dict(estado)
             self._estado["quando"] = time.time()
+
+    def registra_fala(self, texto: str, origem: str = "") -> None:
+        with self._trava:
+            self._falas.append({"i": len(self._falas), "hora": time.strftime("%H:%M:%S"), "texto": texto,
+                                "origem": origem, "pt": None})
+
+    def traduz_fala(self, i: int) -> str | None:
+        """Traduz a fala i para PT-BR (uma vez; fica guardada). Bloqueia quem pediu, não o laço."""
+        with self._trava:
+            if not (0 <= i < len(self._falas)):
+                return None
+            f = self._falas[i]
+            if f["pt"] or self.tradutor is None:
+                return f["pt"]
+            texto = f["texto"]
+        pt = self.tradutor(texto)
+        with self._trava:
+            f["pt"] = pt
+        return pt
 
     # ── quem lê: o laço de controle ─────────────────────────────────────
     def tarefa(self) -> tuple[str, int]:
@@ -156,6 +178,8 @@ class Cabine:
                 "tarefa_seq": self._tarefa_seq,
                 "atalhos": [{"rotulo": r, "frase": f} for r, f in self.atalhos],
                 "parada_pedida": self._parada,
+                "falas": self._falas[-60:],
+                "tradutor": self.tradutor is not None,
                 "fluxos_abertos": self._clientes,
             }
 
@@ -199,6 +223,14 @@ class _Handler(BaseHTTPRequestHandler):
         if caminho == "/parar":
             self.cabine.pede_parada()
             return self._texto(json.dumps({"ok": True}), "application/json")
+        if caminho == "/traduz":
+            n = int(self.headers.get("Content-Length", 0))
+            c = json.loads(self.rfile.read(n) or b"{}")
+            try:
+                pt = self.cabine.traduz_fala(int(c.get("i", -1)))
+            except Exception as e:  # noqa: BLE001
+                return self._erro(502, f"tradução falhou: {e}")
+            return self._texto(json.dumps({"ok": pt is not None, "pt": pt}), "application/json")
         if caminho == "/copo":
             self.cabine.pede_copo()
             return self._texto(json.dumps({"ok": True}), "application/json")
@@ -323,6 +355,13 @@ PAGINA = """<!doctype html>
   <canvas id="pred" width="1200" height="300"
           style="width:100%;max-width:1400px;background:#171717;border:1px solid #2a2a2a;border-radius:4px"></canvas>
 </section>
+<section id="falas" style="display:none;padding:8px 14px;background:#141414;border-bottom:1px solid #2a2a2a">
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">
+    <b>🗣 o que o robô falou</b>
+    <button type="button" id="traduz-tudo" onclick="traduzTudo()" style="padding:3px 10px">🇧🇷 traduzir tudo</button>
+  </div>
+  <div id="falas-lista" style="max-height:220px;overflow-y:auto"></div>
+</section>
 <main id="cams"></main>
 <pre id="estado">carregando…</pre>
 <script>
@@ -347,6 +386,47 @@ function atalhos(e) {
     b.onclick = () => tarefa(a.frase);
     el.appendChild(b);
   }
+}
+
+// HISTÓRICO DE FALAS (02/10): mais nova em cima; o botão PT-BR pede a tradução (o ER-1 traduz) uma vez.
+let falasVistas = '';
+function falas(e) {
+  const lista = e.falas || [];
+  if (!lista.length) return;
+  document.getElementById('falas').style.display = '';
+  document.getElementById('traduz-tudo').style.display = e.tradutor ? '' : 'none';
+  const chave = JSON.stringify(lista.map(f => [f.i, f.pt]));
+  if (chave === falasVistas) return;
+  falasVistas = chave;
+  const el = document.getElementById('falas-lista');
+  el.innerHTML = '';
+  for (const f of lista.slice().reverse()) {
+    const d = document.createElement('div');
+    d.style.cssText = 'padding:3px 0;border-bottom:1px solid #222';
+    const cor = f.origem === 'ER-1' ? '#8fb8e8' : '#c8c8c8';
+    d.innerHTML = `<span style="color:#777">${f.hora}</span> <span style="color:#777">[${f.origem || '—'}]</span> `
+      + `<span style="color:${cor}"></span>`
+      + (f.pt ? `<div style="color:#9ccc9c;padding-left:92px">🇧🇷 </div>` : '');
+    d.children[2].textContent = f.texto;
+    if (f.pt) d.lastChild.append(f.pt);
+    else if (e.tradutor) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = 'PT-BR'; b.style.cssText = 'padding:1px 8px;margin-left:8px;font-size:12px';
+      b.onclick = () => traduz(f.i, b);
+      d.append(b);
+    }
+    el.append(d);
+  }
+}
+async function traduz(i, b) {
+  if (b) { b.disabled = true; b.textContent = '…'; }
+  const r = await (await fetch('traduz', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({i})})).json().catch(() => ({}));
+  if (b && !r.ok) { b.disabled = false; b.textContent = 'PT-BR (falhou)'; }
+}
+async function traduzTudo() {
+  const e = await (await fetch('estado.json', {cache:'no-store'})).json();
+  for (const f of (e.falas || []).slice().reverse()) if (!f.pt) await traduz(f.i);
 }
 
 async function manda(e) {
@@ -422,7 +502,7 @@ async function tique() {
     document.getElementById('meta').textContent =
       `tarefa: ${e.tarefa || '— (segurando)'} · ${e.fluxos_abertos} fluxo(s) de vídeo`;
     document.getElementById('estado').textContent = JSON.stringify(e, null, 2);
-    desenha(e); objetos(e); atalhos(e);
+    desenha(e); objetos(e); atalhos(e); falas(e);
   } catch (_) { document.getElementById('luz').className = 'off'; }
 }
 // ── Predição, desenhada AQUI a partir do JSON ─────────────────────────

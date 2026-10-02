@@ -134,14 +134,15 @@ class Falador:
         import threading
         self.url = f"http://{robo}:8095/fala"
         self.voz, self.ultima, self.cache = voz, None, {}
+        self.ao_falar = None   # (texto, origem) -> histórico da cabine
         self.fila = queue.Queue(maxsize=2)
         threading.Thread(target=self._laco, daemon=True, name="fala").start()
 
-    def diz(self, texto):
+    def diz(self, texto, origem="executor"):
         if texto:
             self.ultima = texto
             try:
-                self.fila.put_nowait(texto)
+                self.fila.put_nowait((texto, origem))
             except Exception:
                 pass
 
@@ -161,12 +162,14 @@ class Falador:
         import urllib.parse
         import urllib.request
         while True:
-            texto = self.fila.get()
+            texto, origem = self.fila.get()
             try:
                 corpo = self._pcm(texto) if self.voz == "piper" else b""
                 req = urllib.request.Request(f"{self.url}?texto={urllib.parse.quote(texto)}", data=corpo, method="POST")
                 urllib.request.urlopen(req, timeout=3).read()
                 print(f"   🗣  {texto}", flush=True)
+                if self.ao_falar is not None:
+                    self.ao_falar(texto, origem)
             except Exception as e:  # noqa: BLE001
                 print(f"   (fala falhou: {e})", flush=True)
 
@@ -596,6 +599,15 @@ def main():
 
     threading.Thread(target=laco_consulta, daemon=True, name="consulta").start()
     fala = Falador(a.robo, a.voz) if a.voz != "nenhuma" else None
+    if fala is not None:
+        fala.ao_falar = cabine.registra_fala   # histórico na cabine (02/10)
+    if a.narra:
+        def _traduz(texto):
+            import urllib.parse
+            import urllib.request
+            url = f"{a.narra}/traduz?" + urllib.parse.urlencode({"t": texto})
+            return json.loads(urllib.request.urlopen(url, timeout=30).read())["pt"]
+        cabine.tradutor = _traduz
     # Fala SEM poluir: cada tarefa é anunciada uma vez; "pegando/soltando" só depois de a mão ficar
     # fechada (ou aberta) por >= 1 s, e cada mão espera 6 s entre avisos — a garra do WLA abre e fecha
     # rápido, e antes cada tremida virava uma frase.
@@ -637,7 +649,7 @@ def main():
                           f"{' (repetida, calada)' if repetida else ''}", flush=True)
                     if not repetida:
                         ditas[k] = agora
-                        fala.diz(texto)
+                        fala.diz(texto, "ER-1")
             except Exception as e:  # noqa: BLE001
                 falhou = time.time()
                 print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)

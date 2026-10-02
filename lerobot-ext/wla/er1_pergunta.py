@@ -9,6 +9,7 @@ devolve a resposta. Cada pergunta fica salva em ~/er1_perguntas/ (imagem + respo
     GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left][&livre=1]
         -> {"resposta": "yes", "sim": true, "ms": 850, "imagem": ".../0003.jpg", "cru": "..."}
         (&max=N limita o tamanho da resposta livre; sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
+    GET /traduz?t=<texto>   tradução para PT-BR (só texto)
     GET /ultima.jpg    a imagem da última pergunta
 
     cd ~/DEV/unifolm-wla && ~/miniforge3/envs/wla/bin/python \\
@@ -108,6 +109,21 @@ def main():
         print(f"[ER-1] {r['hora']} {ms} ms | {cam} | {q} -> {r['resposta']}", flush=True)
         return r
 
+    def traduz(texto):
+        """Só texto, sem imagem: traduz para português do Brasil (histórico de falas da cabine, 02/10)."""
+        msgs = [{"role": "user", "content": [{"type": "text", "text":
+                 "Translate to Brazilian Portuguese. Reply with only the translation, nothing else.\n\n" + texto}]}]
+        with trava:
+            entrada = proc.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True, return_dict=True,
+                                               return_tensors="pt").to(modelo.device)
+            tq = time.perf_counter()
+            with torch.inference_mode():
+                saida = modelo.generate(**entrada, max_new_tokens=80, do_sample=False)
+            ms = round((time.perf_counter() - tq) * 1000)
+            pt = proc.decode(saida[0, entrada["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        print(f"[ER-1] tradução {ms} ms | {texto} -> {pt}", flush=True)
+        return {"texto": texto, "pt": pt, "ms": ms}
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *x):
             pass
@@ -126,6 +142,8 @@ def main():
                 r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1",
                              int(qs.get("max", ["120"])[0]))
                 return self._manda(json.dumps(r, ensure_ascii=False).encode(), "application/json")
+            if u.path == "/traduz" and qs.get("t"):
+                return self._manda(json.dumps(traduz(qs["t"][0]), ensure_ascii=False).encode(), "application/json")
             if u.path == "/ultima.jpg" and estado["ultima"]:
                 return self._manda(Path(estado["ultima"]).read_bytes(), "image/jpeg")
             self._manda(b"use /pergunta?q=...", "text/plain", 404)
