@@ -49,6 +49,11 @@ from teste_cotovelo import BRACOS, CINTURA, Estado, modo_da_ponte, monta_cmd  # 
 # Pose de partida em JUNTAS: mediana do 1º quadro dos 490 episódios de G1_Dex1_Put_Fruit_On_Plate
 # (observation.state.left_arm/right_arm). Uma IK até a pose da mão do dataset, partindo dos braços
 # caídos, caía num ramo torcido (ombro no limite, 2,6 rad de diferença) — por isso junta, não IK.
+def _temp(m):
+    t = m.get("temperature", 0.0)
+    return float(max(t) if isinstance(t, (list, tuple)) else t)
+
+
 POSE_JUNTAS = json.load(open(AQUI / "pose_partida_dex1.json"))
 
 
@@ -196,6 +201,11 @@ def main():
                     help="cm: se o modelo pede a mão a menos disto do ponto SEGURADO, ela fica parada (0 desliga). "
                          "02/10 (rodada 131051): o modelo pede a mão esquerda ~1 cm abaixo da MEDIDA a cada consulta; "
                          "ancorado na medida isso somava e o braço descia 35 cm em 25 s, sem o integrador agir")
+    ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
+                    help="roll e pitch da cintura (alvo 0 = coluna reta, como na gravação). 02/10: com 150/5 o pitch "
+                         "ficava 0,08-0,16 rad à frente e o roll/pitch esquentou até a cintura ceder; a gravação usou 300/8")
+    ap.add_argument("--temp-tronco", type=float, default=65.0,
+                    help="°C: acima disto no roll/pitch da cintura avisa e SEGURA a posição (cabine 'parar')")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
@@ -383,7 +393,7 @@ def main():
 
     def envia():
         if not a.ensaio:
-            cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5)).encode("utf-8"))
+            cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5, *a.kp_tronco)).encode("utf-8"))
 
     fech_mao = {"left": None, "right": None}
 
@@ -651,6 +661,7 @@ def main():
           f"{fc * 100:.0f} cm para cima | mãos a ≥ {a.mao_mao_min * 100:.0f} cm uma da outra | peso da orientação "
           f"{a.peso_rot}", flush=True)
     stats = {}
+    t_temp = [0.0, 0.0]
     segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
         avisou_assenta = [False]
@@ -810,6 +821,17 @@ def main():
                     narra(atual["frase"], fech_mao)
                     usados += 1
             aplica_integrador()
+            # TEMPERATURA da cintura (02/10: o roll/pitch esquentou e a cintura cedeu no meio da tarefa)
+            if tc - t_temp[0] > 2.0:
+                t_temp[0] = tc
+                temps = [_temp(est.low["motor_state"][i]) for i in CINTURA[1:]]
+                if max(temps) >= a.temp_tronco and cabine.tarefa()[0]:
+                    print(f"\n🌡️  cintura roll/pitch a {temps} °C (limite {a.temp_tronco:.0f}): SEGURANDO a posição. "
+                          "Deixe esfriar; mande a tarefa de novo na cabine.", flush=True)
+                    cabine.define_tarefa("")
+                elif max(temps) >= a.temp_tronco - 8 and tc - t_temp[1] > 30:
+                    t_temp[1] = tc
+                    print(f"\n⚠️  cintura roll/pitch esquentando: {temps} °C", flush=True)
             envia()   # sempre: sem trecho novo, segura o último alvo (o arm_sdk nunca fica mudo)
             time.sleep(max(0.0, dt - (time.time() - tc)))
         if atual is not None:

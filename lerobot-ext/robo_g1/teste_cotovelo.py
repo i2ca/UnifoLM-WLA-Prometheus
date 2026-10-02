@@ -83,11 +83,14 @@ def modo_da_ponte(ctx, robo, timeout=3.0):
         s.close()
 
 
-def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_punho):
-    """Comando de 35 motores igual ao da classe UnitreeG1Dex3 em modo loco."""
+def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_punho, kp_tronco=150.0, kd_tronco=5.0):
+    """Comando de 35 motores igual ao da classe UnitreeG1Dex3 em modo loco.
+    kp_tronco/kd_tronco = roll e pitch da cintura. 02/10: com 150/5 o pitch ficava 0,08-0,16 rad à frente
+    (o WBC puxa contra) e o roll/pitch esquentou até ceder; na gravação (300/8) ficou em 0,03 rad."""
     mc = [{"mode": 0, "q": 0.0, "dq": 0.0, "kp": 0.0, "kd": 0.0, "tau": 0.0} for _ in range(N_MOTORES)]
-    for i in CINTURA:   # cintura segura onde está (a classe trava roll/pitch com kp 300)
-        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": 150.0, "kd": 5.0, "tau": 0.0}   # 300/6 esquentava
+    for i in CINTURA:   # cintura segura onde está; yaw 150/5 (o modelo gira o tronco)
+        kp, kd = (150.0, 5.0) if i == CINTURA[0] else (kp_tronco, kd_tronco)
+        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
     for i in BRACOS:
         kp, kd = (kp_punho, kd_punho) if i in PUNHOS else (kp_braco, kd_braco)
         mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
