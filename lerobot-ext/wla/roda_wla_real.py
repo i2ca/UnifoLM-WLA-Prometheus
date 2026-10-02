@@ -291,8 +291,8 @@ def main():
     a = ap.parse_args()
     # WARNING: o servidor oficial tem um logging.info com 2 "%s" e 1 argumento, que quebra em INFO.
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
-    if a.escala > 1.0 or a.caixa > 1.0 or max(a.caixa_mao) > 0.4:
-        sys.exit("escala > 1,0, caixa > 1,0 rad ou caixa da mão > 0,4 m: recusado")
+    if a.escala > 1.0 or a.caixa > 1.0 or max(a.caixa_mao) > 0.6:
+        sys.exit("escala > 1,0, caixa > 1,0 rad ou caixa da mão > 0,6 m: recusado")
 
     ctx = zmq.Context.instance()
     if modo_da_ponte(ctx, a.robo) != "loco":

@@ -27,8 +27,9 @@ else
 fi
 
 # ER-1 (:8098): narra a cada ~10 s o que o robô está fazendo (voz do G1). NARRA=0 não sobe.
+# --rgb: a câmera da cabeça já chega em RGB (sem ele a maçã vermelha saía AZUL para o ER-1, 02/10).
 if [ "${NARRA:-1}" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
-    (cd "$UNIFOLM_WLA" && setsid nohup "$PY" -u "$WLA_DIR/er1_pergunta.py" > ~/er1_pergunta.log 2>&1 < /dev/null &)
+    (cd "$UNIFOLM_WLA" && setsid nohup "$PY" -u "$WLA_DIR/er1_pergunta.py" --rgb > ~/er1_pergunta.log 2>&1 < /dev/null &)
     echo -n "⏳ carregando o ER-1 (narração)"
     for i in $(seq 1 40); do
         grep -q "ER-1 pergunta" ~/er1_pergunta.log 2>/dev/null && break
