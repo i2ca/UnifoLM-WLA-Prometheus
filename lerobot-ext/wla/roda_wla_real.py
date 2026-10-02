@@ -30,6 +30,7 @@ import argparse
 import csv
 import json
 import re
+import threading
 import logging
 import os
 import sys
@@ -195,7 +196,7 @@ def main():
     ap.add_argument("--narra", default="http://127.0.0.1:8098",
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
-    ap.add_argument("--narra-s", type=float, default=6.0, help="segundos entre as narrações do ER-1")
+    ap.add_argument("--narra-s", type=float, default=8.0, help="segundos entre as narrações do ER-1")
     ap.add_argument("--narra-cams", default="head_stereo_left,wrist_right",
                     help="câmeras que o ER-1 vê na narração (cabeça + punho direito: vê se a mão pegou algo)")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
@@ -287,7 +288,7 @@ def main():
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
                     help="yaw = gira o tronco como o modelo pede (o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura onde está")
-    ap.add_argument("--cintura-yaw-max", type=float, default=0.35, help="rad: limite do giro do tronco (≈20°)")
+    ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
     ap.add_argument("--kp-mao", type=float, default=0.5, help="kp dos dedos Dex3 (modelo fig6d)")
     ap.add_argument("--kd-mao", type=float, default=0.1, help="kd dos dedos Dex3 (modelo fig6d)")
     ap.add_argument("--folga-mao", type=float, default=0.25,
@@ -310,12 +311,16 @@ def main():
     sw.sobe(cabine, a.porta)
     cabine.define_tarefa(a.tarefa)
     cabine.atalhos = [tuple(x.split("=", 1)) for x in a.atalhos]
+    # GPU: o WLA e o ER-1 (narração/tradução) rodam UM DE CADA VEZ (02/10: juntos, a consulta do WLA ia a 1,5-1,7 s e o
+    # trecho chegava tarde demais e era descartado; em fila, o WLA só começa depois e observa a cena já atualizada)
+    gpu = threading.Lock()
     if a.narra:   # botão PT-BR do histórico de falas: o ER-1 traduz (já desde o começo, 02/10)
         def _traduz(texto):
             import urllib.parse
             import urllib.request
             url = f"{a.narra}/traduz?" + urllib.parse.urlencode({"t": texto})
-            return json.loads(urllib.request.urlopen(url, timeout=30).read())["pt"]
+            with gpu:
+                return json.loads(urllib.request.urlopen(url, timeout=30).read())["pt"]
         cabine.tradutor = _traduz
     cabine.publica_estado({"modo": "carregando o WLA-1.0 ..."})
     cam = sw.Camera(a.robo, 5555, cabine, "head_camera" if a.cabeca == "cor" else "head_stereo_left")
@@ -544,7 +549,6 @@ def main():
     # consulta sem parar e o laço de controle executa sempre o trecho MAIS NOVO, no passo que
     # corresponde a "agora" (passo = (agora - instante da observação) x hz). A --hz 20 um trecho
     # de 30 passos dura 1,5 s, mais que o intervalo entre respostas: o movimento não para.
-    import threading
     pare = threading.Event()
     novo_trecho, erro_consulta = [None], [None]
     trava = threading.Lock()
@@ -586,14 +590,15 @@ def main():
                 if not (frase_cab or a.tarefa):      # sem tarefa: o robô SEGURA e a rede não é consultada
                     time.sleep(0.1)
                     continue
-                t_obs = time.time()
-                obs, q, ee, garras, frase = monta_obs()
-                # Âncora = pose COMANDADA no instante da observação (o braço cede sob o peso; ancorar no
-                # medido acumulava a queda). O modelo viu a MEDIDA: só o DESLOCAMENTO dele é aplicado.
-                q_cmd = q.copy()
-                for i in BRACOS:
-                    q_cmd[i] = alvo[i]
-                _, acao, ms, _, _ = S.acao(obs)
+                with gpu:
+                    t_obs = time.time()
+                    obs, q, ee, garras, frase = monta_obs()
+                    # Âncora = pose COMANDADA no instante da observação (o braço cede sob o peso; ancorar no
+                    # medido acumulava a queda). O modelo viu a MEDIDA: só o DESLOCAMENTO dele é aplicado.
+                    q_cmd = q.copy()
+                    for i in BRACOS:
+                        q_cmd[i] = alvo[i]
+                    _, acao, ms, _, _ = S.acao(obs)
                 n += 1
                 trecho = {"n": n, "acao": acao, "ms": ms, "t_obs": t_obs, "q": q, "ee": ee, "garras": garras,
                           "frase": frase, "seq": seq, "base": {l: fk.pose(q_cmd, l) for l in ("left", "right")},
@@ -662,18 +667,20 @@ def main():
             sensores = "; ".join(f"{l} hand {movimento(p[l] - antes['p'][l])}, fingers {mao(l)}"
                                  for l in ("right", "left"))
             antes["p"] = p
-            ja = " ".join(f'"{h}"' for h in historico) or "nothing yet"
-            prompt = (f'You are Prometheus, a humanoid robot. Your task: "{frase}"\n'
-                      "Image 1: your head camera. Image 2: your right wrist camera (shows your right hand).\n"
-                      f"Your sensors, last {a.narra_s:.0f} s: {sensores}.\n"
-                      f"What you already said, oldest first: {ja}\n"
-                      "In ONE short, specific first-person sentence (max 15 words), say what you are doing right now "
-                      "and what you see: e.g. lowering your hand toward an object, holding something, placing it. "
-                      "Say only what is new since your last sentence.")
+            ultima = historico[-1] if historico else None
+            prompt = (f'You are Prometheus, a humanoid robot. Task: "{frase}"\n'
+                      "Image 1: head camera. Image 2: right wrist camera.\n"
+                      f"Sensors (last {a.narra_s:.0f} s): {sensores}.\n"
+                      + (f'Your previous sentence was: "{ultima}". Do NOT repeat it; use different words and add '
+                         "something new.\n" if ultima else "")
+                      + "Rules: open fingers means you are NOT holding anything. Never say 'nothing new'.\n"
+                      "Reply with ONE short first-person sentence (max 15 words) about what you are doing now and "
+                      "what you see near your hand.")
             try:
                 u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": prompt, "livre": 1, "max": 40,
                                                                      "cam": a.narra_cams})
-                r = json.loads(urllib.request.urlopen(u, timeout=20).read())
+                with gpu:
+                    r = json.loads(urllib.request.urlopen(u, timeout=20).read())
                 if r.get("erro"):
                     raise RuntimeError(r["erro"])
             except Exception as e:  # noqa: BLE001
@@ -681,7 +688,7 @@ def main():
                 print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
                 continue
             texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
-            if not texto or (cabine.tarefa()[0] or a.tarefa) != frase:
+            if not texto or (cabine.tarefa()[0] or a.tarefa) != frase or "nothing new" in texto.lower():
                 continue
             historico.append(texto)
             k, agora = chave(texto), time.time()

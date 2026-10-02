@@ -97,8 +97,17 @@ class Cabine:
 
     def registra_fala(self, texto: str, origem: str = "") -> None:
         with self._trava:
-            self._falas.append({"i": len(self._falas), "hora": time.strftime("%H:%M:%S"), "texto": texto,
+            i = len(self._falas)
+            self._falas.append({"i": i, "hora": time.strftime("%H:%M:%S"), "texto": texto,
                                 "origem": origem, "pt": None})
+        if self.tradutor is not None:   # tradução AUTOMÁTICA, numa thread: não segura quem falou (02/10)
+            threading.Thread(target=self._traduz_quieto, args=(i,), daemon=True).start()
+
+    def _traduz_quieto(self, i: int) -> None:
+        try:
+            self.traduz_fala(i)
+        except Exception:  # noqa: BLE001
+            pass                        # fica o botão PT-BR para tentar de novo
 
     def traduz_fala(self, i: int) -> str | None:
         """Traduz a fala i para PT-BR (uma vez; fica guardada). Bloqueia quem pediu, não o laço."""
