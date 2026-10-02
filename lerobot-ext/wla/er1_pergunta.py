@@ -6,7 +6,7 @@ Para checar se uma tarefa foi CONCLUÍDA olhando a imagem (ex.: "Is the white cu
 strainer?"). Pega o quadro mais novo da câmera (cameras_wla_server, porta 5555), pergunta ao ER-1 e
 devolve a resposta. Cada pergunta fica salva em ~/er1_perguntas/ (imagem + resposta).
 
-    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left][&livre=1]
+    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left[,wrist_right]][&livre=1]
         -> {"resposta": "yes", "sim": true, "ms": 850, "imagem": ".../0003.jpg", "cru": "..."}
         (&max=N limita o tamanho da resposta livre; sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
     GET /traduz?t=<texto>   tradução para PT-BR (só texto)
@@ -99,16 +99,21 @@ def main():
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
     def pergunta(q, cam, livre, max_tokens=120):
-        t = cams.t.get(cam, 0)
-        bgr = cams.quadro(cam)
-        if bgr is None or time.time() - t > 2.0:
-            r = {"erro": f"sem imagem recente da câmera '{cam}' (há {time.time() - t:.0f} s; chegando: {sorted(cams.jpg)})"}
-            print(f"[ER-1] {r['erro']}", flush=True)
-            return r
-        rgb = bgr if a.rgb else cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        # cam pode ser várias, separadas por vírgula (02/10: cabeça + punho direito para a narração): vão em ordem
+        bgrs = []
+        for c in cam.split(","):
+            t = cams.t.get(c, 0)
+            b = cams.quadro(c)
+            if b is None or time.time() - t > 2.0:
+                r = {"erro": f"sem imagem recente da câmera '{c}' (há {time.time() - t:.0f} s; chegando: {sorted(cams.jpg)})"}
+                print(f"[ER-1] {r['erro']}", flush=True)
+                return r
+            bgrs.append(b)
+        rgbs = [b if a.rgb else cv2.cvtColor(b, cv2.COLOR_BGR2RGB) for b in bgrs]
+        bgr = np.hstack([cv2.resize(b, (bgrs[0].shape[1], bgrs[0].shape[0])) for b in bgrs])   # só para salvar
         texto = q if livre else f"{q}\nLook carefully at the image. Answer only yes or no."
-        msgs = [{"role": "user", "content": [{"type": "image", "image": Image.fromarray(rgb)},
-                                             {"type": "text", "text": texto}]}]
+        msgs = [{"role": "user", "content": [{"type": "image", "image": Image.fromarray(x)} for x in rgbs]
+                 + [{"type": "text", "text": texto}]}]
         with trava:
             entrada = proc.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True, return_dict=True,
                                                return_tensors="pt").to(modelo.device)

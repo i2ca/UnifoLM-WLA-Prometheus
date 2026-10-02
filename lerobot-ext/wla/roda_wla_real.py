@@ -174,17 +174,6 @@ class Falador:
                 print(f"   (fala falhou: {e})", flush=True)
 
 
-# Etapas de cada tarefa para a narração do ER-1 (02/10): pergunta SIM/NÃO (câmera da cabeça) -> o que o robô
-# diz quando ela vira SIM duas vezes seguidas. As perguntas seguem o formato que acertou nos testes do coador.
-ETAPAS = {
-    "apple": [("Is the robot hand holding the red apple?", "I have the apple."),
-              # "Is the red apple on the black X?" dava SIM com a maçã AO LADO do X
-              ("Is the black X covered by the red apple?", "The apple is on the X. Done.")],
-    "under the coffee strainer": [("Is there a mug directly below the coffee strainer?", "The mug is under the strainer. Done.")],
-    "pick up the white mug": [("Is the robot hand holding the white mug?", "I have the mug. Done.")],
-}
-
-
 def R_de(rpy):
     return Rotation.from_euler("xyz", rpy).as_matrix()
 
@@ -206,11 +195,9 @@ def main():
     ap.add_argument("--narra", default="http://127.0.0.1:8098",
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
-    ap.add_argument("--narra-s", type=float, default=4.0, help="segundos entre as perguntas do ER-1")
-    ap.add_argument("--narra-modo", choices=["etapas", "livre"], default="etapas",
-                    help="etapas = o ER-1 responde SIM/NÃO se cada etapa da tarefa já aconteceu e o robô só fala quando "
-                         "muda de etapa (02/10: a descrição livre repetia 'Reaching for the apple' com a mão parada e "
-                         "levava 1,5 s); livre = descrição livre a cada --narra-s")
+    ap.add_argument("--narra-s", type=float, default=6.0, help="segundos entre as narrações do ER-1")
+    ap.add_argument("--narra-cams", default="head_stereo_left,wrist_right",
+                    help="câmeras que o ER-1 vê na narração (cabeça + punho direito: vê se a mão pegou algo)")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
@@ -634,72 +621,76 @@ def main():
     # NARRAÇÃO pelo ER-1 (02/10): no lugar de "Grasping/Releasing", a cada --narra-s o ER-1 olha a câmera da
     # cabeça e diz numa frase curta o que o robô está fazendo na tarefa atual (thread própria: nunca atrasa o controle).
     def laco_narra():
+        """NARRAÇÃO (02/10): a cada --narra-s o ER-1 vê a cabeça + o punho direito e diz numa frase curta o que o
+        robô está fazendo e vendo. Recebe o que os SENSORES dizem (para onde cada mão andou, mão aberta/fechada)
+        e o que ele mesmo disse antes, para contar a evolução em vez de repetir a cena."""
+        import collections
         import urllib.parse
         import urllib.request
         falhou = 0.0
-        ditas = {}   # frase normalizada -> quando foi dita (02/10: repetia "Reach for the white mug" a cada 10 s)
+        ditas = {}                                   # frase normalizada -> quando foi dita
+        historico = collections.deque(maxlen=5)      # o que o ER-1 disse nesta tarefa (dito ou calado)
+        antes = {"frase": None, "p": None}
 
         def chave(t):
             t = re.sub(r"[^a-z ]", "", t.lower())
             t = re.sub(r"\b(\w+)ing\b", r"\1", t)          # reaching == reach
             return " ".join(w for w in t.split() if w not in ("i", "am", "the", "a", "an", "is", "on", "my"))
 
-        etapa = {"frase": None, "i": 0, "sims": 0}
+        def movimento(d):
+            """Deslocamento da mão (pelvis, m) -> palavras: 'moved down 8 cm and forward 5 cm' / 'stayed still'."""
+            partes = []
+            for k, (pos, neg) in enumerate((("forward", "back"), ("to the left", "to the right"), ("up", "down"))):
+                if abs(d[k]) >= 0.02:
+                    partes.append(f"{pos if d[k] > 0 else neg} {abs(d[k]) * 100:.0f} cm")
+            return "moved " + " and ".join(partes) if partes else "stayed still"
 
-        def pergunta(q, livre):
-            u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": int(livre), "max": 32})
-            r = json.loads(urllib.request.urlopen(u, timeout=15).read())
-            if r.get("erro"):
-                raise RuntimeError(r["erro"])
-            return r
+        def mao(l):
+            c = fech_mao.get(l)
+            return "unknown" if c is None else ("closed" if c > 0.6 else "open" if c < 0.3 else "half closed")
 
         while not pare.is_set():
             time.sleep(a.narra_s)
             frase = cabine.tarefa()[0] or a.tarefa
-            if a.narra_modo == "etapas":
-                if not frase or time.time() - falhou < 60:
-                    continue
-                if etapa["frase"] != frase:
-                    etapa.update(frase=frase, i=0, sims=0)
-                lista = next((v for k, v in ETAPAS.items() if k in frase.lower()), [])
-                if etapa["i"] >= len(lista):
-                    continue
-                q, dito = lista[etapa["i"]]
-                try:
-                    r = pergunta(q, False)
-                except Exception as e:  # noqa: BLE001
-                    falhou = time.time()
-                    print(f"\n⚠️  ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
-                    continue
-                if (cabine.tarefa()[0] or a.tarefa) != frase:
-                    continue
-                etapa["sims"] = etapa["sims"] + 1 if r.get("sim") else 0
-                print(f"\n🧠 ER-1 ({r.get('ms')} ms): {q} -> {r.get('resposta')} ({etapa['sims']}/2)", flush=True)
-                if etapa["sims"] >= 2:             # duas vezes SIM seguidas: a etapa aconteceu
-                    etapa["i"] += 1
-                    etapa["sims"] = 0
-                    fala.diz(dito, "ER-1")
-                continue
             if not frase or time.time() - falhou < 60:
                 continue
-            # (02/10: pedir "o que está fazendo" só repetia a tarefa; pedir o PASSO atual descreve a cena)
-            q = (f'You are a humanoid robot doing the task: "{frase}". Look at this head camera image: where are '
-                 "your hands and the objects? In one short first-person sentence (max 12 words), describe the current "
-                 "step, not the whole task.")
+            q = q29()
+            p = {l: fk.pose(q, l)[1] for l in ("left", "right")}
+            if antes["frase"] != frase:              # tarefa nova: história nova
+                historico.clear()
+                antes.update(frase=frase, p=p)
+            sensores = "; ".join(f"{l} hand {movimento(p[l] - antes['p'][l])}, fingers {mao(l)}"
+                                 for l in ("right", "left"))
+            antes["p"] = p
+            ja = " ".join(f'"{h}"' for h in historico) or "nothing yet"
+            prompt = (f'You are Prometheus, a humanoid robot. Your task: "{frase}"\n'
+                      "Image 1: your head camera. Image 2: your right wrist camera (shows your right hand).\n"
+                      f"Your sensors, last {a.narra_s:.0f} s: {sensores}.\n"
+                      f"What you already said, oldest first: {ja}\n"
+                      "In ONE short, specific first-person sentence (max 15 words), say what you are doing right now "
+                      "and what you see: e.g. lowering your hand toward an object, holding something, placing it. "
+                      "Say only what is new since your last sentence.")
             try:
-                r = pergunta(q, True)
-                texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
-                if texto and not r.get("erro") and (cabine.tarefa()[0] or a.tarefa) == frase:
-                    k, agora = chave(texto), time.time()
-                    repetida = agora - ditas.get(k, -1e9) < a.narra_repete_s
-                    print(f"\n{'🔇' if repetida else '🗣️ '} ER-1 ({r.get('ms')} ms): {texto}"
-                          f"{' (repetida, calada)' if repetida else ''}", flush=True)
-                    if not repetida:
-                        ditas[k] = agora
-                        fala.diz(texto, "ER-1")
+                u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": prompt, "livre": 1, "max": 40,
+                                                                     "cam": a.narra_cams})
+                r = json.loads(urllib.request.urlopen(u, timeout=20).read())
+                if r.get("erro"):
+                    raise RuntimeError(r["erro"])
             except Exception as e:  # noqa: BLE001
                 falhou = time.time()
                 print(f"\n⚠️  narração do ER-1 indisponível ({a.narra}): {e} — tento de novo em 60 s", flush=True)
+                continue
+            texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
+            if not texto or (cabine.tarefa()[0] or a.tarefa) != frase:
+                continue
+            historico.append(texto)
+            k, agora = chave(texto), time.time()
+            repetida = agora - ditas.get(k, -1e9) < a.narra_repete_s
+            print(f"\n{'🔇' if repetida else '🗣️ '} ER-1 ({r.get('ms')} ms) [{sensores}]: {texto}"
+                  f"{' (repetida, calada)' if repetida else ''}", flush=True)
+            if not repetida:
+                ditas[k] = agora
+                fala.diz(texto, "ER-1")
 
     if fala is not None and a.narra:
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
