@@ -641,6 +641,8 @@ def main():
             try:
                 url = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 32})
                 r = json.loads(urllib.request.urlopen(url, timeout=15).read())
+                if r.get("erro"):
+                    raise RuntimeError(r["erro"])
                 texto = (r.get("cru") or "").strip().split("\n")[0].strip(' "')
                 if texto and not r.get("erro") and (cabine.tarefa()[0] or a.tarefa) == frase:
                     k, agora = chave(texto), time.time()

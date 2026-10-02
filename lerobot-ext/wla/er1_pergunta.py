@@ -38,26 +38,45 @@ ER1 = "playground/Pretrained_models/UnifoLM-ER-1"
 
 
 class Cameras:
-    """Último quadro de cada câmera da mensagem do cameras_wla_server (JPEG em BGR, como o OpenCV)."""
+    """Último quadro de cada câmera da mensagem do cameras_wla_server (JPEG em BGR, como o OpenCV).
+    02/10: guarda o JPEG cru e só decodifica a câmera pedida (antes decodificava 4 câmeras a 30 Hz), e se
+    nada chega por 2 s refaz o socket — o receptor ficou parado com o stream no ar e toda pergunta voltava
+    "sem imagem recente"."""
 
     def __init__(self, robo, porta):
-        self.bgr, self.t = {}, {}
-        s = zmq.Context.instance().socket(zmq.SUB)
-        s.setsockopt_string(zmq.SUBSCRIBE, "")
-        s.setsockopt(zmq.RCVHWM, 2)
-        s.connect(f"tcp://{robo}:{porta}")
-        threading.Thread(target=self._laco, args=(s,), daemon=True).start()
+        self.robo, self.porta = robo, porta
+        self.jpg, self.t = {}, {}
+        threading.Thread(target=self._laco, daemon=True).start()
 
-    def _laco(self, s):
+    @property
+    def bgr(self):
+        return {n: self.quadro(n) for n in self.jpg}
+
+    def quadro(self, nome):
+        b = self.jpg.get(nome)
+        return None if b is None else cv2.imdecode(np.frombuffer(base64.b64decode(b), np.uint8), cv2.IMREAD_COLOR)
+
+    def _laco(self):
         while True:
-            try:
-                m = json.loads(s.recv_multipart()[0])
+            s = zmq.Context.instance().socket(zmq.SUB)
+            s.setsockopt_string(zmq.SUBSCRIBE, "")
+            s.setsockopt(zmq.RCVHWM, 2)
+            s.setsockopt(zmq.RCVTIMEO, 2000)
+            s.setsockopt(zmq.LINGER, 0)
+            s.connect(f"tcp://{self.robo}:{self.porta}")
+            while True:
+                try:
+                    m = json.loads(s.recv_multipart()[0])
+                except zmq.Again:
+                    print("[ER-1] câmera muda há 2 s: reconectando", flush=True)
+                    break
+                except Exception:
+                    continue
                 for nome, b in (m.get("images") or {}).items():
                     if isinstance(b, str):
-                        self.bgr[nome] = cv2.imdecode(np.frombuffer(base64.b64decode(b), np.uint8), cv2.IMREAD_COLOR)
+                        self.jpg[nome] = b
                         self.t[nome] = time.time()
-            except Exception:
-                time.sleep(0.05)
+            s.close()
 
 
 def main():
@@ -80,10 +99,12 @@ def main():
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
     def pergunta(q, cam, livre, max_tokens=120):
-        bgr, t = cams.bgr.get(cam), cams.t.get(cam, 0)
+        t = cams.t.get(cam, 0)
+        bgr = cams.quadro(cam)
         if bgr is None or time.time() - t > 2.0:
-            return {"erro": f"sem imagem recente da câmera '{cam}' (chegando: {sorted(cams.bgr)})"}
-        bgr = bgr.copy()
+            r = {"erro": f"sem imagem recente da câmera '{cam}' (há {time.time() - t:.0f} s; chegando: {sorted(cams.jpg)})"}
+            print(f"[ER-1] {r['erro']}", flush=True)
+            return r
         rgb = bgr if a.rgb else cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         texto = q if livre else f"{q}\nLook carefully at the image. Answer only yes or no."
         msgs = [{"role": "user", "content": [{"type": "image", "image": Image.fromarray(rgb)},
