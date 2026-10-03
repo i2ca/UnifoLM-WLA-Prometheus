@@ -121,13 +121,52 @@ def instala_carregador_lora(run, passo):
     srv.baseframework.from_pretrained = carrega
 
 
+def instala_amostragem(passos, amostras, escala_ruido):
+    """MENOS RUÍDO NA AÇÃO (03/10): o DiT gera cada trecho por flow matching partindo de ruído aleatório, em 4 passos.
+    Com o modelo ainda aprendendo, trechos seguidos discordam e a mão "desvia" do lugar. Aqui:
+      passos       mais passos de integração do fluxo (trajetória mais limpa);
+      amostras     K trechos com ruídos diferentes no MESMO lote e a MÉDIA deles (corta a variância);
+      escala_ruido ruído inicial menor (<1 = mais perto da trajetória mais provável)."""
+    import threading
+    import torch
+    from unifolm_wla.model.modules.action_model import MMDiT_ActionHeader as mh
+    orig = mh.MMDiTFlowmatchingActionHead.predict_action
+    trava = threading.Lock()
+
+    def predict_action(self, vl_embs, state=None, action_mask=None, encoder_attention_mask=None, body_type_ids=None):
+        if passos:
+            self.num_inference_timesteps = passos
+        K = max(1, amostras)
+        rep = (lambda x: None if x is None else x.repeat_interleave(K, 0)) if K > 1 else (lambda x: x)
+        with trava:
+            randn = torch.randn
+            if escala_ruido != 1.0:
+                mh.torch.randn = lambda *a, **k: randn(*a, **k) * escala_ruido
+            try:
+                out = orig(self, rep(vl_embs), state=rep(state), action_mask=rep(action_mask),
+                           encoder_attention_mask=rep(encoder_attention_mask), body_type_ids=rep(body_type_ids))
+            finally:
+                mh.torch.randn = randn
+        if K > 1:
+            out = out.view(vl_embs.shape[0], K, *out.shape[1:]).mean(dim=1)
+        return out
+
+    mh.MMDiTFlowmatchingActionHead.predict_action = predict_action
+    print(f"amostragem: {passos or 'padrão'} passos de fluxo | média de {max(1, amostras)} trechos | "
+          f"ruído inicial x{escala_ruido}", flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ckpt_path", required=True)
     p.add_argument("--instruction", default="")
     p.add_argument("--unnorm_key", default="Prometheus_G1_Dex3")
     p.add_argument("--use_bf16", action="store_true", default=True)
-    p.add_argument("--image_size", type=int, nargs=2, default=[320, 448])
+    p.add_argument("--image_size", type=int, nargs=2, default=[336, 448],
+                   help="tamanho que o VLM recebe; 03/10: era 320x448, mas o treino (configs de dados) usa 336x448")
+    p.add_argument("--passos-fluxo", type=int, default=10, help="passos do flow matching do DiT (o treino usa 4)")
+    p.add_argument("--amostras", type=int, default=4, help="trechos sorteados por consulta; a ação é a média")
+    p.add_argument("--escala-ruido", type=float, default=0.7, help="escala do ruído inicial (1 = o original)")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8601)
     p.add_argument("--debug_save_dir", default=None)
@@ -136,6 +175,7 @@ def main():
     a = p.parse_args()
     if a.lora_run:
         instala_carregador_lora(a.lora_run, a.lora_passo)
+    instala_amostragem(a.passos_fluxo, a.amostras, a.escala_ruido)
     # WARNING: o servidor oficial tem um logging.info com 2 "%s" e 1 argumento, que quebra em INFO.
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
     s = ServidorDex3(a)
