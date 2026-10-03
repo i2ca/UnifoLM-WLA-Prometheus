@@ -283,7 +283,8 @@ def main():
     ap.add_argument("--atalhos", nargs="*", default=[
         "pegar caneca=Pick up the white mug.",
         "caneca → coador=Place the white mug under the coffee strainer.",
-        "maçã → X=Pick up the apple and place it on the black X."],
+        "maçã → X=Pick up the apple and place it on the black X.",
+        "pegar maçã=Pick up the apple."],
                     help="botões de tarefa na cabine, 'rótulo=frase'")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
