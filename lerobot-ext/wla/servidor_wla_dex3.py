@@ -164,9 +164,11 @@ def main():
     p.add_argument("--use_bf16", action="store_true", default=True)
     p.add_argument("--image_size", type=int, nargs=2, default=[336, 448],
                    help="tamanho que o VLM recebe; 03/10: era 320x448, mas o treino (configs de dados) usa 336x448")
-    p.add_argument("--passos-fluxo", type=int, default=10, help="passos do flow matching do DiT (o treino usa 4)")
-    p.add_argument("--amostras", type=int, default=4, help="trechos sorteados por consulta; a ação é a média")
-    p.add_argument("--escala-ruido", type=float, default=0.7, help="escala do ruído inicial (1 = o original)")
+    # Latência medida na PGX (03/10): fluxo 4 x 1 amostra = 660 ms | 4 x 4 = 1390 ms | 6 x 2 = 1305 ms | 10 x 4 = 3200 ms.
+    # O trecho dura 1,5 s: acima de ~1,1 s ele chega tarde. Padrão: 4 passos, média de 2, ruído x0,6.
+    p.add_argument("--passos-fluxo", type=int, default=4, help="passos do flow matching do DiT (o treino usa 4)")
+    p.add_argument("--amostras", type=int, default=2, help="trechos sorteados por consulta; a ação é a média")
+    p.add_argument("--escala-ruido", type=float, default=0.6, help="escala do ruído inicial (1 = o original)")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8601)
     p.add_argument("--debug_save_dir", default=None)
