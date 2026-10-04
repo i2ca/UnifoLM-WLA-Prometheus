@@ -69,8 +69,15 @@ def init_checkpoint_and_lora(self):
     if partir and not getattr(self.config.trainer, "is_resume", False):
         self.checkpoint_dir = os.path.join(self.config.output_dir, "checkpoints")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        self.model = self.apply_lora_adapters(self.model, self.config.trainer.lora)   # chaves já renomeadas
+        # ORDEM (04/10): o checkpoint tem o DiT com LoRA (chaves renomeadas: to_q.base_layer...) e o VLM SEM LoRA
+        # (q_proj.weight). Injetar os dois antes de carregar renomeava também o VLM e os pesos dele NÃO entravam
+        # (perda das perguntas 7,0 em vez de ~0,1). Então: LoRA só no DiT -> carrega -> LoRA no VLM.
+        from omegaconf import OmegaConf
+        lora = OmegaConf.to_container(self.config.trainer.lora, resolve=True)
+        so = lambda nome: {"enabled": True, nome: lora.get(nome)}   # noqa: E731
+        self.model = self.apply_lora_adapters(self.model, so("action_model"))
         self.model = self.load_pretrained_backbones(self.model, partir, reload_modules=None)
+        self.model = self.apply_lora_adapters(self.model, so("qwen_vl_interface"))
         self.completed_steps, self.resume_from_checkpoint = 0, partir
         print(f"▶ partindo de {partir} (LoRA do DiT afinado; LoRA do VLM novo)", flush=True)
     else:
