@@ -1,0 +1,114 @@
+# 03/10: igual ao lora_prometheus_dex3.yaml + LoRA no VLM + co-treino de perguntas (treina_cotreino_wla.py)
+run_id: lora_prometheus_dex3_maca_x_preto
+run_root_dir: playground/Checkpoints
+seed: 42
+wandb_entity: your_wandb_entity
+wandb_project: unifolm_wla_finetune
+is_debug: false
+
+framework:
+  name: QwenMMDiT
+  qwenvl:
+    # Overridden at launch to <base_model_dir>/tokenizer — the released
+    # checkpoint's own VLM weights are already in `trainer.pretrained_checkpoint`
+    # below, so `base_vlm` only needs to supply the architecture config +
+    # tokenizer (see `_is_weightless_base_vlm` in unifolm_wla/model/modules/vlm/QWen3.py).
+    base_vlm: /path/to/UnifoLM-WLA-1.0-Base/tokenizer
+    attn_implementation: flash_attention_2
+    vl_hidden_dim: 2560
+  robot_state_projector:
+    enabled: true
+    input_dim: 120
+    projector_hidden_size: null
+    load_from: null
+  action_model:
+    action_model_type: DiT-L
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 54
+    state_dim: 0
+    action_horizon: 30
+    repeated_diffusion_steps: 1
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    embodiment_types: ["unitree"]
+    diffusion_model_cfg:
+      cross_attention_dim: 2560
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: "ada_norm"
+      num_layers: 16
+      num_attention_heads: 32
+      attention_head_dim: 48
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_py: multi_source_datasets
+    # Overridden at launch to the --data_config_path passed to
+    # run_finetune_mmdit_frozen_vlm.sh (default: unitree.yaml).
+    data_config_path: unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_dex3.yaml
+    per_device_batch_size: 1
+    num_workers: 2
+
+trainer:
+  # Overridden at launch to <base_model_dir>/checkpoints/model.safetensors.
+  pretrained_checkpoint: /path/to/UnifoLM-WLA-1.0-Base/checkpoints/model.safetensors
+  is_resume: false
+  # VLM backbone stays frozen (as in mmdit_finetune_frozen_vlm.yaml). The
+  # action-expert (DiT) head is LoRA-adapted instead of fully fine-tuned —
+  # peft freezes its base weights automatically, so it is NOT listed here.
+  # 03/10 CO-TREINO: o VLM NÃO fica congelado inteiro — ganha LoRA nas camadas de linguagem (a base dele é
+  # congelada pelo peft e pelo treina_cotreino_wla.py). Ver o cabeçalho de treina_cotreino_wla.py.
+  freeze_modules: ""
+  cotreino:
+    jsonl: /data/mrwlker/er1_lora/dados/treino.jsonl   # perguntas sim/não das nossas imagens (gera_dataset_er1.py)
+    peso: 0.1
+    lote: 4
+  partir_de: null      # ex.: .../lora_prometheus_dex3_mix_athena/checkpoints/steps_30000_model.safetensors
+  lora:
+    enabled: true
+    qwen_vl_interface:
+      enabled: true
+      r: 16
+      lora_alpha: 32
+      lora_dropout: 0.05
+      target_modules: ".*language_model.*\\.(q_proj|k_proj|v_proj|o_proj)"
+      bias: "none"
+    action_model:
+      enabled: true
+      r: 16
+      lora_alpha: 32
+      lora_dropout: 0.05
+      # Attention linears of the DiT's QwenImageTransformerBlock (action stream
+      # + text-conditioning stream). See unifolm_wla/model/modules/action_model/DiT_modules/mmdit.py.
+      # Optional additions (not enabled by default): FFN linears
+      # (action_mlp.net.0.proj, action_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2),
+      # AdaLN modulation (action_mod.1, txt_mod.1), or top-level I/O projections
+      # (txt_in, proj_out_1, proj_out_2).
+      target_modules: ["to_q", "to_k", "to_v", "to_out.0", "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out"]
+      bias: "none"
+  max_train_steps: 20000
+  num_warmup_steps: 200
+  save_interval: 2000
+  eval_interval: 2000
+  logging_frequency: 10
+  gradient_accumulation_steps: 8
+  gradient_clipping: 1.0
+  learning_rate:
+    base: 1.0e-04
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+  save_format: safetensors

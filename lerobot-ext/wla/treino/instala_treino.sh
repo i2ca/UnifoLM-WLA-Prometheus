@@ -6,11 +6,11 @@ set -e
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WLA="${1:-$HOME/DEV/unifolm-wla}"
 test -d "$WLA/unifolm_wla" || { echo "não achei $WLA/unifolm_wla — clone o unifolm-wla primeiro"; exit 1; }
-ln -sf "$AQUI/lora_prometheus_dex3.yaml" "$WLA/unifolm_wla/config/training/lora_prometheus_dex3.yaml"
+for f in lora_prometheus_dex3.yaml lora_prometheus_dex3_cotreino.yaml; do ln -sf "$AQUI/$f" "$WLA/unifolm_wla/config/training/$f"; done
 for f in "$AQUI"/prometheus_dex3*.yaml; do f=$(basename "$f")
     ln -sf "$AQUI/$f" "$WLA/unifolm_wla/dataloader/multi_source_dataset/configs/$f"
 done
-for f in treina_lora_prometheus_dex3.sh avalia_checkpoints_wla.py extrai_delta_lora.py testa_dados_wla.py; do
+for f in treina_lora_prometheus_dex3.sh treina_cotreino_wla.py avalia_checkpoints_wla.py extrai_delta_lora.py testa_dados_wla.py; do
     ln -sf "$AQUI/$f" "$WLA/$f"
 done
 echo "ok: configs e scripts de treino ligados em $WLA"
