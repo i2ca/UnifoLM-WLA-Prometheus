@@ -89,6 +89,23 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
         return out
 
 
+def aplica_lora(m, lora_cfg):
+    """Injeta o LoRA do treino no DiT e/ou no VLM. Aceita target_modules como LISTA (nomes, o oficial) ou STRING
+    (regex do peft — o co-treino de 03/10 põe LoRA nas camadas de linguagem do VLM com regex)."""
+    from peft import LoraConfig, inject_adapter_in_model
+    if not lora_cfg or not lora_cfg.get("enabled", False):
+        return m
+    for nome, alvo in (("qwen_vl_interface", lambda: m.qwen_vl_interface.model), ("action_model", lambda: m.action_model.model)):
+        sub = lora_cfg.get(nome) or {}
+        if not sub.get("enabled", False):
+            continue
+        tm = sub.get("target_modules", [])
+        inject_adapter_in_model(LoraConfig(r=sub.get("r", 16), lora_alpha=sub.get("lora_alpha", 32),
+                                           lora_dropout=sub.get("lora_dropout", 0.05), bias=sub.get("bias", "none"),
+                                           target_modules=tm if isinstance(tm, str) else list(tm)), alvo())
+    return m
+
+
 def instala_carregador_lora(run, passo):
     """Troca o from_pretrained que o servidor oficial chama por: base -> LoRA -> pesos afinados -> normalização."""
     from pathlib import Path
@@ -108,7 +125,7 @@ def instala_carregador_lora(run, passo):
 
     def carrega(base_ckpt, *args, **kw):
         m = original(base_ckpt, *args, **kw)
-        TrainerUtils.apply_lora_adapters(m, yaml.safe_load(open(run / "config.yaml"))["trainer"]["lora"])
+        aplica_lora(m, yaml.safe_load(open(run / "config.yaml"))["trainer"]["lora"])
         falta, sobra = m.load_state_dict(load_file(str(fino)), strict=False)
         if sobra:
             sys.exit(f"chaves do checkpoint que o modelo não tem: {sobra[:5]}")

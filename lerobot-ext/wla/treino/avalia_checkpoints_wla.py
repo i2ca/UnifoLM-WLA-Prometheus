@@ -38,11 +38,28 @@ PARTES = ["left_xyz_rotvec", "right_xyz_rotvec", "left_fig6d", "right_fig6d", "w
           "left_leg_joint", "right_leg_joint", "base_vx_vy", "base_vw", "height"]
 
 
+def aplica_lora(m, lora_cfg):
+    """Injeta o LoRA do treino no DiT e/ou no VLM. Aceita target_modules como LISTA (nomes, o oficial) ou STRING
+    (regex do peft — o co-treino de 03/10 põe LoRA nas camadas de linguagem do VLM com regex)."""
+    from peft import LoraConfig, inject_adapter_in_model
+    if not lora_cfg or not lora_cfg.get("enabled", False):
+        return m
+    for nome, alvo in (("qwen_vl_interface", lambda: m.qwen_vl_interface.model), ("action_model", lambda: m.action_model.model)):
+        sub = lora_cfg.get(nome) or {}
+        if not sub.get("enabled", False):
+            continue
+        tm = sub.get("target_modules", [])
+        inject_adapter_in_model(LoraConfig(r=sub.get("r", 16), lora_alpha=sub.get("lora_alpha", 32),
+                                           lora_dropout=sub.get("lora_dropout", 0.05), bias=sub.get("bias", "none"),
+                                           target_modules=tm if isinstance(tm, str) else list(tm)), alvo())
+    return m
+
+
 def carrega_lora(base_ckpt, fino_ckpt, run_dir):
     """Base -> injeta o LoRA (config do treino) -> pesos afinados -> normalização do treino."""
     m = baseframework.from_pretrained(base_ckpt)
     cfg = yaml.safe_load(open(Path(run_dir) / "config.yaml"))
-    TrainerUtils.apply_lora_adapters(m, cfg["trainer"]["lora"])
+    aplica_lora(m, cfg["trainer"]["lora"])
     sd = load_file(fino_ckpt)
     falta, sobra = m.load_state_dict(sd, strict=False)
     if sobra:
