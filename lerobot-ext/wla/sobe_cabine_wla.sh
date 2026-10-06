@@ -4,7 +4,7 @@
 #   2. roda o executor no robô real: vai para a POSE DE GRAVAÇÃO e fica SEGURANDO, sem tarefa;
 #   3. na cabine (http://<pgx>:8090) você aperta "pegar caneca", depois "caneca → coador" (ou escreve a frase);
 #      "⏸ parar" = o robô MANTÉM a posição em que está e espera outra tarefa (emergência: o cogumelo).
-# 4. o ER-1 (:8098) narra pela voz do G1 o que o robô está fazendo, a cada ~10 s (NARRA=0 desliga).
+# 4. ER-1 (narração/tradução) só com NARRA=1 — por padrão o WLA roda sozinho.
 # Argumentos extras vão para o roda_wla_real.py (ex.: --pose inicial, --braco-esquerdo ativo).
 #   bash sobe_cabine_wla.sh
 WLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +26,10 @@ else
     echo; grep -E "LoRA carregado|servidor WLA Dex3" ~/wla_servidor_dex3.log | tail -2
 fi
 
-# ER-1 (:8098): narra a cada ~10 s o que o robô está fazendo (voz do G1). NARRA=0 não sobe.
+# ER-1 (:8098): narração pela voz do G1 + tradução na cabine. DESLIGADO por padrão (06/10: deixa o WLA sozinho na
+# GPU); NARRA=1 sobe e liga.
 # --rgb: a câmera da cabeça já chega em RGB (sem ele a maçã vermelha saía AZUL para o ER-1, 02/10).
-if [ "${NARRA:-1}" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
+if [ "${NARRA:-0}" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
     (cd "$UNIFOLM_WLA" && setsid nohup "$PY" -u "$WLA_DIR/er1_pergunta.py" --rgb > ~/er1_pergunta.log 2>&1 < /dev/null &)
     echo -n "⏳ carregando o ER-1 (narração)"
     for i in $(seq 1 40); do
@@ -40,5 +41,7 @@ if [ "${NARRA:-1}" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; th
 fi
 
 cd "$UNIFOLM_WLA" || exit 1
+SEM_ER1=()
+[ "${NARRA:-0}" = "1" ] || SEM_ER1=(--narra "")
 exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
-    --braco-esquerdo ativo --juntas-travadas 20 "$@"
+    --braco-esquerdo ativo --juntas-travadas 20 "${SEM_ER1[@]}" "$@"
