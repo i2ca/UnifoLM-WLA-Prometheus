@@ -58,7 +58,9 @@ def aplica_lora(m, lora_cfg):
 def carrega_lora(base_ckpt, fino_ckpt, run_dir):
     """Base -> injeta o LoRA (config do treino) -> pesos afinados -> normalização do treino."""
     m = baseframework.from_pretrained(base_ckpt)
-    cfg = yaml.safe_load(open(Path(run_dir) / "config.yaml"))
+    # config.full.yaml (o completo): no co-treino o config.yaml saiu resumido, sem os target_modules
+    full = Path(run_dir) / "config.full.yaml"
+    cfg = yaml.safe_load(open(full if full.exists() else Path(run_dir) / "config.yaml"))
     aplica_lora(m, cfg["trainer"]["lora"])
     sd = load_file(fino_ckpt)
     falta, sobra = m.load_state_dict(sd, strict=False)

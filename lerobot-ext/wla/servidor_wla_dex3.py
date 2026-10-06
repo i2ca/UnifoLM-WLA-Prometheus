@@ -125,7 +125,9 @@ def instala_carregador_lora(run, passo):
 
     def carrega(base_ckpt, *args, **kw):
         m = original(base_ckpt, *args, **kw)
-        aplica_lora(m, yaml.safe_load(open(run / "config.yaml"))["trainer"]["lora"])
+        # config.full.yaml (o completo): no co-treino o config.yaml saiu resumido, sem os target_modules
+        cfg_run = run / "config.full.yaml" if (run / "config.full.yaml").exists() else run / "config.yaml"
+        aplica_lora(m, yaml.safe_load(open(cfg_run))["trainer"]["lora"])
         falta, sobra = m.load_state_dict(load_file(str(fino)), strict=False)
         if sobra:
             sys.exit(f"chaves do checkpoint que o modelo não tem: {sobra[:5]}")
