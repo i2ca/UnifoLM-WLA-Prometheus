@@ -305,9 +305,14 @@ class PoseInicial:
         self.cmd.send(json.dumps({"topic": "rt/arm_sdk", "data": {"mode_pr": 1, "mode_machine": mm,
                                                                   "motor_cmd": mc}}).encode(), zmq.NOBLOCK)
 
-    def _abre_maos(self):
+    # mão FECHADA (punho) = 80% da mão em repouso medida no robô, ordem do SDK — a mesma do executor do WLA
+    PUNHO = {"left": [0.0, 0.76, 1.256, -1.248, -1.368, -1.216, -1.424],
+             "right": [0.0, -0.8, -1.32, 1.232, 1.376, 1.232, 1.352]}
+
+    def _abre_maos(self, fecha=False):
         for lado in ("left", "right"):
-            mc = [{"mode": (k & 0x0F) | (0x01 << 4), "q": 0.0, "dq": 0.0, "kp": 1.0, "kd": 0.2, "tau": 0.0}
+            alvo = self.PUNHO[lado] if fecha else [0.0] * 7
+            mc = [{"mode": (k & 0x0F) | (0x01 << 4), "q": alvo[k], "dq": 0.0, "kp": 1.0, "kd": 0.2, "tau": 0.0}
                   for k in range(7)]
             self.mao.send(json.dumps({"topic": f"rt/dex3/{lado}/cmd", "data": {"motor_cmd": mc}}).encode(),
                           zmq.NOBLOCK)
@@ -321,6 +326,15 @@ class PoseInicial:
             dur = max(4.0, maior / 0.25)
             print(f"[diagnóstico] pose inicial ({tipo}): até {maior:.2f} rad, em {dur:.0f} s", flush=True)
             q = dict(q0)
+            # pose de DESCANSO (06/10): fecha o PUNHO primeiro, com o braço parado, e vai de mão fechada
+            fecha = tipo == "descanso"
+            t_mao = 1.5 if fecha else 0.0
+            t0 = time.time()
+            while fecha and time.time() - t0 < t_mao:
+                self._envia(q, mm)
+                self._abre_maos(fecha=True)
+                self.estado = "fechando o punho"
+                time.sleep(0.02)
             t0 = time.time()
             while time.time() - t0 < dur + 1.5:
                 pan, idade_p = D.pega("panico")
@@ -334,7 +348,7 @@ class PoseInicial:
                 for i in alvo:
                     q[i] = q0[i] + s * (alvo[i] - q0[i])
                 self._envia(q, mm)
-                self._abre_maos()
+                self._abre_maos(fecha=fecha)
                 self.estado = f"indo para a pose {tipo}: {100 * u:.0f}%"
                 time.sleep(0.02)
             self.pedido.send(json.dumps({"panico": True}).encode())
