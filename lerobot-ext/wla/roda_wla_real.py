@@ -246,6 +246,8 @@ def main():
     ap.add_argument("--gravar", default=str(Path.home() / "wla_real_runs"),
                     help="pasta onde cada rodada grava imagens + estado + resposta da IA por consulta ('' desliga)")
     ap.add_argument("--tempo-pose", type=float, default=10.0)
+    ap.add_argument("--fecha-antes-volta", type=float, default=1.5,
+                    help="s: no botão 'posição inicial', fecha as mãos parado por este tempo antes de voltar (0 = não fecha)")
     ap.add_argument("--tempo-volta", type=float, default=6.0,
                     help="s: botão 'posição inicial' da cabine — volta devagar para a pose de partida e segura")
     ap.add_argument("--hz", type=float, default=20.0,
@@ -820,19 +822,31 @@ def main():
                 cabine.define_tarefa("")
                 frase_agora, atual, anterior, chegou = "", None, None, None
                 volta = {"t0": tc, "de": {i: q_des[i] for i in BRACOS}, "yaw": alvo[12]}
-                print(f"\n   ↩ voltando à posição inicial ({a.tempo_volta:.0f} s)", flush=True)
+                print(f"\n   ↩ fechando a mão ({a.fecha_antes_volta:.1f} s) e voltando à posição inicial ({a.tempo_volta:.0f} s)",
+                      flush=True)
             if volta is not None:
                 if frase_agora:                    # chegou tarefa nova no meio: ela manda
                     volta = None
                 else:
-                    u = min(1.0, (tc - volta["t0"]) / a.tempo_volta)
-                    sv = 0.5 - 0.5 * np.cos(np.pi * u)
-                    for i in BRACOS:
-                        q_des[i] = float(volta["de"][i] + sv * (partida[i] - volta["de"][i]))
-                    alvo[12] = float(volta["yaw"] + sv * (partida[12] - volta["yaw"]))
-                    if u >= 1.0:
-                        volta = None
-                        print("   ✅ na posição inicial — mande uma tarefa na cabine", flush=True)
+                    # 06/10: FECHA A MÃO antes de voltar (os dedos abertos enroscavam na caneca/mesa no caminho):
+                    # --fecha-antes-volta s com o braço parado e as duas mãos fechando (força limitada), depois o
+                    # braço volta com a mão fechada e, ao chegar, a mão ABRE (os episódios começam de mão aberta).
+                    t_mao = a.fecha_antes_volta if not a.sem_maos else 0.0
+                    if tc - volta["t0"] < t_mao:
+                        envia_maos_fig6d({l: np.ones(6, np.float32) for l in ("left", "right")})
+                    else:
+                        u = min(1.0, (tc - volta["t0"] - t_mao) / a.tempo_volta)
+                        sv = 0.5 - 0.5 * np.cos(np.pi * u)
+                        for i in BRACOS:
+                            q_des[i] = float(volta["de"][i] + sv * (partida[i] - volta["de"][i]))
+                        alvo[12] = float(volta["yaw"] + sv * (partida[12] - volta["yaw"]))
+                        if t_mao:
+                            envia_maos_fig6d({l: np.ones(6, np.float32) for l in ("left", "right")})
+                        if u >= 1.0:
+                            volta = None
+                            if t_mao:
+                                envia_maos_fig6d({l: np.zeros(6, np.float32) for l in ("left", "right")})
+                            print("   ✅ na posição inicial (mão aberta) — mande uma tarefa na cabine", flush=True)
             if chegou is not None:
                 if atual is not None:
                     _registra(atual, stats, log, t_ini, alvo, q29(), cabine, a, est, partida, fech_mao, usados)
