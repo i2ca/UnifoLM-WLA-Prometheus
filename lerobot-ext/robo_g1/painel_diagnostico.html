@@ -53,6 +53,8 @@ tr.grupo td{background:#20252f;color:var(--apagado);font-size:11px;text-transfor
   <button id="bPanico" onclick="panico()">Travar agora</button>
   <button id="bPose" onclick="pose()" style="background:#1f4f8a;border-color:#58a6ff">Assumir pose inicial</button>
   <button id="bPoseGrav" onclick="pose('gravacao')" style="background:#1f6a4f;border-color:#3fb950">Pose de gravação</button>
+  <button id="bPoseDesc" onclick="pose('descanso')" style="background:#4a3a1f;border-color:#d29922"
+          title="braços baixados ao lado do corpo, coluna reta — não esquenta; para esperar entre testes">Pose de descanso (fria)</button>
   <span id="pPose" class="pilula" style="max-width:420px;white-space:normal">pose inicial —</span>
   <span id="pModo" class="pilula">modo —</span>
   <span id="pBat" class="pilula">bateria —</span>
@@ -133,6 +135,7 @@ async function rearma() {
 async function panico() { await fetch('panico', {method: 'POST'}); }
 async function pose(tipo = 'inicial') {
   const nome = tipo === 'gravacao' ? 'a pose de GRAVAÇÃO (coluna reta, braços abertos e levantados, fora da cena)'
+             : tipo === 'descanso' ? 'a pose de DESCANSO (braços baixados ao lado do corpo, coluna reta — não esquenta)'
                                    : 'a pose inicial (coluna reta, mãos afastadas)';
   if (!confirm('Levar os braços DEVAGAR para ' + nome + ' e abrir as mãos? ' +
                'Área em volta dos braços livre? Mão no cogumelo. No fim a ponte fica TRAVADA segurando a pose.')) return;

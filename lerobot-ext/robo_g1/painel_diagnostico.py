@@ -273,7 +273,7 @@ class PoseInicial:
             return "já está indo para a pose"
         try:
             p = json.load(open(POSE_ARQ))
-            suf = {"inicial": "_inicial", "elevada": "_elevada", "gravacao": "_gravacao"}.get(tipo, "")
+            suf = {"inicial": "_inicial", "elevada": "_elevada", "gravacao": "_gravacao", "descanso": "_descanso"}.get(tipo, "")
             alvo = dict(zip(BRACOS, list(p["left" + suf]) + list(p["right" + suf])))
             # inicial/gravação: coluna reta; elevada/dataset: tronco 10° à frente, como no dataset
             alvo.update(dict(zip(CINTURA, p.get("cintura" + suf, p.get("cintura", [0.0] * 3)))))
@@ -476,7 +476,7 @@ def main():
                 ok = VOZ.pede(pcm, texto)
                 return self._manda(json.dumps({"ok": ok}).encode(), "application/json")
             elif self.path.startswith("/pose_inicial"):
-                tipo = next((x for x in ("dataset", "elevada", "gravacao", "inicial") if x in self.path), "inicial")
+                tipo = next((x for x in ("dataset", "elevada", "gravacao", "descanso", "inicial") if x in self.path), "inicial")
                 msg = POSE.comeca(tipo)
                 print(f"[diagnóstico] botão pose inicial ({tipo}): {msg}", flush=True)
                 return self._manda(json.dumps({"ok": msg == "indo", "msg": msg}).encode(), "application/json")

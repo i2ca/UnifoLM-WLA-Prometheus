@@ -35,13 +35,13 @@
   0.6173,
   0.7187
  ],
- "elevada": "ombro pitch -0.35 rad nos dois bra\u00e7os; punho igual ao dataset",
+ "elevada": "ombro pitch -0.35 rad nos dois braços; punho igual ao dataset",
  "cintura": [
   -0.012,
   -0.019,
   0.179
  ],
- "cintura_nota": "yaw, roll, pitch: mediana do dataset (waist_state_joint). O rob\u00f4 deles trabalha com o tronco 10 graus \u00e0 frente; c\u00e2mera da cabe\u00e7a a 46 cm acima da pelvis e 58 graus para baixo (state_d435)",
+ "cintura_nota": "yaw, roll, pitch: mediana do dataset (waist_state_joint). O robô deles trabalha com o tronco 10 graus à frente; câmera da cabeça a 46 cm acima da pelvis e 58 graus para baixo (state_d435)",
  "left_inicial": [
   -0.5272,
   0.8661,
@@ -65,7 +65,7 @@
   0.0,
   0.0
  ],
- "inicial": "01/10 noite: bot\u00e3o 'Assumir pose inicial' do painel = coluna reta, m\u00e3os \u00e0 frente na altura da mesa, ~4,5 cm mais afastadas que a antiga (y +29,4 / -28,6 cm); igual \u00e0 pose de grava\u00e7\u00e3o",
+ "inicial": "01/10 noite: botão 'Assumir pose inicial' do painel = coluna reta, mãos à frente na altura da mesa, ~4,5 cm mais afastadas que a antiga (y +29,4 / -28,6 cm); igual à pose de gravação",
  "left_maca": [
   0.0137,
   0.0431,
@@ -103,7 +103,7 @@
   -0.188,
   0.0121
  ],
- "maca": "mediana do 1\u00ba quadro dos 50 epis\u00f3dios de maca_x_preto_2026-09-30 (o dataset do fine-tuning Dex3): m\u00e3os esq (24.8, 30.0, -1.5) cm e dir (37.8, -22.3, 6.9) cm da pelvis, cintura pitch 0,165",
+ "maca": "mediana do 1º quadro dos 50 episódios de maca_x_preto_2026-09-30 (o dataset do fine-tuning Dex3): mãos esq (24.8, 30.0, -1.5) cm e dir (37.8, -22.3, 6.9) cm da pelvis, cintura pitch 0,165",
  "left_gravacao": [
   -0.7454,
   1.0384,
@@ -127,7 +127,7 @@
   0.0,
   0.0
  ],
- "gravacao": "02/10: bot\u00e3o 'Pose de grava\u00e7\u00e3o' do painel = bra\u00e7os ABERTOS e levantados, fora da cena (a mesma de gravacao_aberta, em que come\u00e7am os datasets da caneca e do coador); a pose inicial \u00e9 a outra",
+ "gravacao": "02/10: botão 'Pose de gravação' do painel = braços ABERTOS e levantados, fora da cena (a mesma de gravacao_aberta, em que começam os datasets da caneca e do coador); a pose inicial é a outra",
  "left_gravacao_aberta": [
   -0.7454,
   1.0384,
@@ -151,7 +151,7 @@
   0.0,
   0.0
  ],
- "gravacao_aberta": "01/10 tarde: a 1\u00aa pose de grava\u00e7\u00e3o (bra\u00e7os abertos, m\u00e3os a y \u00b147,6 cm) \u2014 o dataset da caneca (copo_branco_2026-10-01) come\u00e7a nela",
+ "gravacao_aberta": "01/10 tarde: a 1ª pose de gravação (braços abertos, mãos a y ±47,6 cm) — o dataset da caneca (copo_branco_2026-10-01) começa nela",
  "left_inicial_antiga": [
   -0.5406,
   0.7705,
@@ -175,7 +175,7 @@
   0.0,
   0.0
  ],
- "inicial_antiga": "at\u00e9 01/10: pose inicial com as m\u00e3os a y \u00b124 cm",
+ "inicial_antiga": "até 01/10: pose inicial com as mãos a y ±24 cm",
  "left_coador": [
   -0.1271,
   0.0745,
@@ -199,5 +199,29 @@
   -0.0083,
   0.034
  ],
- "coador": "02/10: mediana do 1\u00ba quadro dos 50 epis\u00f3dios de copo_no_coador_2026-10-01 \u2014 m\u00e3o dir. \u00e0 frente na altura da mesa (36,6/-24,6/16,5 cm) SEGURANDO a caneca (dedos ~0,9); use com --segura-mao-dir"
+ "coador": "02/10: mediana do 1º quadro dos 50 episódios de copo_no_coador_2026-10-01 — mão dir. à frente na altura da mesa (36,6/-24,6/16,5 cm) SEGURANDO a caneca (dedos ~0,9); use com --segura-mao-dir",
+ "left_descanso": [
+  0.291,
+  0.2185,
+  -0.0297,
+  0.9824,
+  0.0453,
+  0.0634,
+  -0.0207
+ ],
+ "right_descanso": [
+  0.2923,
+  -0.2178,
+  0.0289,
+  0.9804,
+  -0.0503,
+  0.0711,
+  0.0115
+ ],
+ "cintura_descanso": [
+  0.0,
+  0.0,
+  0.0
+ ],
+ "descanso_nota": "06/10: braços baixados ao lado do corpo, cotovelo ~56°, coluna reta — pose FRIA para esperar entre testes (pitch da cintura ~1,7 Nm, contra ~17 Nm na de gravação)"
 }
