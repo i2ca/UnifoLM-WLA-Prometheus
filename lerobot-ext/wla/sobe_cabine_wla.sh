@@ -10,8 +10,8 @@
 WLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIFOLM_WLA="${UNIFOLM_WLA:-$HOME/DEV/unifolm-wla}"
 PY="${WLA_PY:-$HOME/miniforge3/envs/wla/bin/python}"
-export RUN="${RUN:-lora_prometheus_dex3_tres_tarefas_athena}"
-PASSO="${PASSO:-30000}"
+export RUN="${RUN:-lora_prometheus_dex3_cotreino}"   # 06/10: co-treino (LoRA no VLM + perguntas); antes tres_tarefas_athena 30000
+PASSO="${PASSO:-20000}"
 
 if (echo > /dev/tcp/127.0.0.1/8601) 2>/dev/null; then
     echo "✅ servidor do WLA já está no ar (:8601) — $(pgrep -af 'servidor_wla_[d]ex3' | grep -o 'lora_run [^ ]*' | head -1)"
