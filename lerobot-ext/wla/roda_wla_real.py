@@ -246,6 +246,8 @@ def main():
     ap.add_argument("--gravar", default=str(Path.home() / "wla_real_runs"),
                     help="pasta onde cada rodada grava imagens + estado + resposta da IA por consulta ('' desliga)")
     ap.add_argument("--tempo-pose", type=float, default=10.0)
+    ap.add_argument("--espera-fechar", type=float, default=1.2,
+                    help="s: quando o modelo manda fechar a mão, o braço fica parado este tempo (os dedos fecham antes de subir)")
     ap.add_argument("--fecha-antes-volta", type=float, default=1.5,
                     help="s: no botão 'posição inicial', ABRE as mãos parado por este tempo antes de voltar (0 = não espera)")
     ap.add_argument("--tempo-volta", type=float, default=6.0,
@@ -804,6 +806,7 @@ def main():
           f"{a.peso_rot}", flush=True)
     stats = {}
     volta = None   # botão 'posição inicial' da cabine
+    fech_ant, segura_braco = {}, {}   # espera os dedos fecharem antes de subir
     t_temp = [0.0, 0.0]
     segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
@@ -953,7 +956,19 @@ def main():
                             alvos_p["right"][1] += folga / 2
                         else:
                             alvos_p["right"][1] += folga
+                    # ESPERA FECHAR (08/10): na teleoperação a Dex3 fechava rápido (kp cheio); aqui, com a força limitada,
+                    # os dedos levam ~1 s — e o modelo já mandava SUBIR com os dedos ainda fechando: a maçã escapava.
+                    # Quando o modelo passa de mão aberta para fechada, o braço fica parado --espera-fechar s.
+                    if "action.left_fig6d" in acao and a.espera_fechar > 0:
+                        for l in lados_ativos:
+                            c = float(np.mean(ponto("fig6d", l)))
+                            if fech_ant.get(l, 0.0) < 0.5 <= c:
+                                segura_braco[l] = tc + a.espera_fechar
+                                print(f"\n   ✊ {l}: fechando a mão — braço parado {a.espera_fechar:.1f} s", flush=True)
+                            fech_ant[l] = c
                     for l in lados_ativos:
+                        if tc < segura_braco.get(l, 0.0):
+                            continue                       # braço parado esperando os dedos fecharem
                         R0, p0 = atual["base"][l]
                         Rm, pm = atual["medida"][l]
                         v = vs[l]
