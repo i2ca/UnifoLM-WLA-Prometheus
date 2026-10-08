@@ -247,7 +247,7 @@ def main():
                     help="pasta onde cada rodada grava imagens + estado + resposta da IA por consulta ('' desliga)")
     ap.add_argument("--tempo-pose", type=float, default=10.0)
     ap.add_argument("--fecha-antes-volta", type=float, default=1.5,
-                    help="s: no botão 'posição inicial', fecha as mãos parado por este tempo antes de voltar (0 = não fecha)")
+                    help="s: no botão 'posição inicial', ABRE as mãos parado por este tempo antes de voltar (0 = não espera)")
     ap.add_argument("--tempo-volta", type=float, default=6.0,
                     help="s: botão 'posição inicial' da cabine — volta devagar para a pose de partida e segura")
     ap.add_argument("--hz", type=float, default=20.0,
@@ -587,12 +587,24 @@ def main():
         grav = Gravador(a.gravar, vars(a))
         print(f"💾 gravando cada consulta em {grav.pasta}", flush=True)
 
+    aviso_cam = [0.0]
+
     def laco_consulta():
         n = 0
         while not pare.is_set():
             try:
                 frase_cab, seq = cabine.tarefa()
                 if not (frase_cab or a.tarefa):      # sem tarefa: o robô SEGURA e a rede não é consultada
+                    time.sleep(0.1)
+                    continue
+                # 08/10: sem as câmeras de PUNHO (paradas há > 1 s) o modelo recebia só a cabeça — fora do treino, ele
+                # ficava parado. Agora o robô SEGURA e avisa, em vez de consultar com imagens faltando.
+                if punhos and not all(c.rgb is not None and time.time() - c.t < 1.0 for c in punhos.values()):
+                    if time.time() - aviso_cam[0] > 5:
+                        aviso_cam[0] = time.time()
+                        idade = {k: (f"{time.time() - c.t:.0f} s" if c.rgb is not None else "nunca") for k, c in punhos.items()}
+                        print(f"\n📷⚠️  câmera de punho parada {idade}: segurando sem consultar o modelo "
+                              "(confira o cameras_wla_server / os cabos USB no robô)", flush=True)
                     time.sleep(0.1)
                     continue
                 with gpu:
@@ -840,18 +852,17 @@ def main():
                 cabine.define_tarefa("")
                 frase_agora, atual, anterior, chegou = "", None, None, None
                 volta = {"t0": tc, "de": {i: q_des[i] for i in BRACOS}, "yaw": alvo[12]}
-                print(f"\n   ↩ fechando a mão ({a.fecha_antes_volta:.1f} s) e voltando à posição inicial ({a.tempo_volta:.0f} s)",
+                print(f"\n   ↩ abrindo a mão ({a.fecha_antes_volta:.1f} s) e voltando à posição inicial ({a.tempo_volta:.0f} s)",
                       flush=True)
             if volta is not None:
                 if frase_agora:                    # chegou tarefa nova no meio: ela manda
                     volta = None
                 else:
-                    # 06/10: FECHA A MÃO antes de voltar (os dedos abertos enroscavam na caneca/mesa no caminho):
-                    # --fecha-antes-volta s com o braço parado e as duas mãos fechando (força limitada), depois o
-                    # braço volta com a mão fechada e, ao chegar, a mão ABRE (os episódios começam de mão aberta).
+                    # 08/10: ABRE A MÃO antes de voltar (solta o que estiver segurando): --fecha-antes-volta s com o braço
+                    # parado e as mãos abrindo; o braço volta de mão aberta (os episódios começam de mão aberta).
                     t_mao = a.fecha_antes_volta if not a.sem_maos else 0.0
                     if tc - volta["t0"] < t_mao:
-                        envia_maos_fig6d({l: np.ones(6, np.float32) for l in ("left", "right")})
+                        envia_maos_fig6d({l: np.zeros(6, np.float32) for l in ("left", "right")})
                     else:
                         u = min(1.0, (tc - volta["t0"] - t_mao) / a.tempo_volta)
                         sv = 0.5 - 0.5 * np.cos(np.pi * u)
@@ -859,7 +870,7 @@ def main():
                             q_des[i] = float(volta["de"][i] + sv * (partida[i] - volta["de"][i]))
                         alvo[12] = float(volta["yaw"] + sv * (partida[12] - volta["yaw"]))
                         if t_mao:
-                            envia_maos_fig6d({l: np.ones(6, np.float32) for l in ("left", "right")})
+                            envia_maos_fig6d({l: np.zeros(6, np.float32) for l in ("left", "right")})
                         if u >= 1.0:
                             volta = None
                             if t_mao:
