@@ -294,9 +294,9 @@ def main():
                     help="yaw = gira o tronco como o modelo pede (o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura onde está")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
-    ap.add_argument("--kp-mao", type=float, default=0.5, help="kp dos dedos Dex3 (modelo fig6d)")
+    ap.add_argument("--kp-mao", type=float, default=0.7, help="kp dos dedos Dex3 (modelo fig6d)")
     ap.add_argument("--kd-mao", type=float, default=0.1, help="kd dos dedos Dex3 (modelo fig6d)")
-    ap.add_argument("--folga-mao", type=float, default=0.25,
+    ap.add_argument("--folga-mao", type=float, default=0.35,
                     help="rad: o alvo do dedo fica no máx. isto da posição medida — limita a força ao segurar "
                          "(≈ kp-mao x folga-mao por junta)")
     ap.add_argument("--fecha-max", type=float, default=0.85, help="fração do fechamento total que o modelo pode pedir")
@@ -668,7 +668,7 @@ def main():
                 continue
             p = fk.pose(q29(), "right")[1]
             if antes["frase"] != frase:
-                antes.update(frase=frase, p=p)
+                antes.update(frase=frase, p=p, sims=0, avisou=None)
             texto = f"{movimento(p - antes['p']).capitalize()}, {dedos('right')}"
             antes["p"] = p
             if time.time() - falhou > 60:
@@ -687,6 +687,24 @@ def main():
                 except Exception as e:  # noqa: BLE001
                     falhou = time.time()
                     print(f"\n⚠️  ER-1 indisponível ({a.narra}): {e} — narro só pelos sensores por 60 s", flush=True)
+            # TERMINOU? (08/10) — pergunta do LoRA do ER-1, no MESMO formato do treino (94,9% nos episódios de teste);
+            # duas vezes "sim" seguidas = o robô avisa e a cabine registra
+            if time.time() - falhou > 60:
+                try:
+                    qf = f'The robot\'s task is: "{frase}" Has the robot completed this task? Answer only yes or no.'
+                    u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": qf, "livre": 1, "max": 4, "lora": 1,
+                                                                         "cam": "head_stereo_left"})
+                    with gpu:
+                        rf = json.loads(urllib.request.urlopen(u, timeout=10).read())
+                    sim = (rf.get("cru") or "").strip().lower().startswith("yes")
+                    antes["sims"] = antes.get("sims", 0) + 1 if sim else 0
+                    print(f"\n🏁 ER-1: terminou? {'SIM' if sim else 'não'} ({antes['sims']}/2)", flush=True)
+                    if antes["sims"] == 2 and antes.get("avisou") != frase:
+                        antes["avisou"] = frase
+                        fala.diz("Task completed.", "ER-1")
+                        print(f"\n✅ ER-1: TAREFA CONCLUÍDA — {frase}", flush=True)
+                except Exception as e:  # noqa: BLE001
+                    print(f"\n⚠️  ER-1 (terminou?) indisponível: {e}", flush=True)
             if (cabine.tarefa()[0] or a.tarefa) != frase:
                 continue
             texto += "."

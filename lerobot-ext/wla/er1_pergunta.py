@@ -6,7 +6,7 @@ Para checar se uma tarefa foi CONCLUÍDA olhando a imagem (ex.: "Is the white cu
 strainer?"). Pega o quadro mais novo da câmera (cameras_wla_server, porta 5555), pergunta ao ER-1 e
 devolve a resposta. Cada pergunta fica salva em ~/er1_perguntas/ (imagem + resposta).
 
-    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left[,wrist_right]][&livre=1][&escala=0.5]
+    GET /pergunta?q=<pergunta em inglês>[&cam=head_stereo_left[,wrist_right]][&livre=1][&escala=0.5][&lora=0|1]
         -> {"resposta": "yes", "sim": true, "ms": 850, "imagem": ".../0003.jpg", "cru": "..."}
         (&max=N limita o tamanho da resposta livre; sem livre=1 a pergunta ganha "Answer only yes or no."; com livre=1 a resposta é texto livre)
     GET /traduz?t=<texto>   tradução para PT-BR (só texto)
@@ -83,6 +83,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--robo", default="192.168.123.164")
     ap.add_argument("--porta", type=int, default=8098)
+    ap.add_argument("--adaptador", default=str(Path.home() / "DEV/unifolm-wla/playground/Checkpoints/er1_lora_prometheus/adaptador_ep2"),
+                    help="LoRA do ER-1 treinado na nossa cena (94,9%% nas perguntas de teste); '' = só o original. "
+                         "Ligado nas perguntas com lora=1; desligado na descrição livre e na tradução")
     ap.add_argument("--rgb", action="store_true", help="se as cores saírem trocadas (maçã azul), use isto")
     ap.add_argument("--pasta", default=str(Path.home() / "er1_perguntas"))
     a = ap.parse_args()
@@ -93,12 +96,21 @@ def main():
     t0 = time.time()
     proc = AutoProcessor.from_pretrained(ER1)
     modelo = AutoModelForImageTextToText.from_pretrained(ER1, dtype=torch.bfloat16, device_map="cuda").eval()
+    import contextlib
+    tem_lora = bool(a.adaptador) and Path(a.adaptador).exists()
+    if tem_lora:
+        from peft import PeftModel
+        modelo = PeftModel.from_pretrained(modelo, a.adaptador).eval()
+        print(f"ER-1 + adaptador {a.adaptador}", flush=True)
+
+    def sem_lora():
+        return modelo.disable_adapter() if tem_lora else contextlib.nullcontext()
     print(f"ER-1 carregado em {time.time() - t0:.0f} s", flush=True)
     cams = Cameras(a.robo, 5555)
     trava = threading.Lock()
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
-    def pergunta(q, cam, livre, max_tokens=120, escala=1.0):
+    def pergunta(q, cam, livre, max_tokens=120, escala=1.0, lora=None):
         # cam pode ser várias, separadas por vírgula (02/10: cabeça + punho direito para a narração): vão em ordem
         bgrs = []
         for c in cam.split(","):
@@ -121,7 +133,9 @@ def main():
                                                return_tensors="pt").to(modelo.device)
             tq = time.perf_counter()
             with torch.inference_mode():
-                saida = modelo.generate(**entrada, max_new_tokens=8 if not livre else max_tokens, do_sample=False)
+                usa = (not livre) if lora is None else lora      # padrão: adaptador só nas perguntas sim/não
+                with (contextlib.nullcontext() if usa else sem_lora()):
+                    saida = modelo.generate(**entrada, max_new_tokens=8 if not livre else max_tokens, do_sample=False)
             ms = round((time.perf_counter() - tq) * 1000)
             cru = proc.decode(saida[0, entrada["input_ids"].shape[1]:], skip_special_tokens=True).strip()
             estado["n"] += 1
@@ -146,7 +160,8 @@ def main():
                                                return_tensors="pt").to(modelo.device)
             tq = time.perf_counter()
             with torch.inference_mode():
-                saida = modelo.generate(**entrada, max_new_tokens=80, do_sample=False)
+                with sem_lora():
+                    saida = modelo.generate(**entrada, max_new_tokens=80, do_sample=False)
             ms = round((time.perf_counter() - tq) * 1000)
             pt = proc.decode(saida[0, entrada["input_ids"].shape[1]:], skip_special_tokens=True).strip()
         print(f"[ER-1] tradução {ms} ms | {texto} -> {pt}", flush=True)
@@ -168,7 +183,8 @@ def main():
             qs = urllib.parse.parse_qs(u.query)
             if u.path == "/pergunta" and qs.get("q"):
                 r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1",
-                             int(qs.get("max", ["120"])[0]), float(qs.get("escala", ["1"])[0]))
+                             int(qs.get("max", ["120"])[0]), float(qs.get("escala", ["1"])[0]),
+                             {"1": True, "0": False}.get(qs.get("lora", [""])[0]))
                 return self._manda(json.dumps(r, ensure_ascii=False).encode(), "application/json")
             if u.path == "/traduz" and qs.get("t"):
                 return self._manda(json.dumps(traduz(qs["t"][0]), ensure_ascii=False).encode(), "application/json")
