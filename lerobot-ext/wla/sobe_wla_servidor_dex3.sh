@@ -6,8 +6,8 @@
 WLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"            # esta pasta (lerobot-ext/wla)
 UNIFOLM_WLA="${UNIFOLM_WLA:-$HOME/DEV/unifolm-wla}"                  # clone do unitreerobotics/unifolm-wla
 PY="${WLA_PY:-$HOME/miniforge3/envs/wla/bin/python}"
-PASSO=${1:-8000}
-RUN=${RUN:-lora_prometheus_dex3_maca_medido}   # 01/10: treino com a mão MEDIDA (o de 30/09: lora_prometheus_dex3_maca_x_preto)
+PASSO=${1:-20000}
+RUN=${RUN:-lora_prometheus_dex3_cotreino}   # 13/10: co-treino (os antigos foram apagados da PGX; estão na Athena)
 for p in $(pgrep -f "servidor_wla_[d]ex3.py"); do kill $p; done
 sleep 2
 cd "$UNIFOLM_WLA"
