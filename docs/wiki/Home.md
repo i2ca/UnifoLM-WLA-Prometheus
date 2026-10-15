@@ -11,7 +11,7 @@ O UnifoLM-WLA-1.0 da Unitree no **G1 + Dex3 do Prometheus**: do VR ao robô pega
 5. **[Conversão e treino](Conversao-e-Treino)**: formato do WLA, Dex3 como `fig6d`, **ação = mão medida**, LoRA na Athena.
 6. **[Servidor e execução](Servidor-e-Execucao)**: servidor Dex3 `:8601`, executor no robô real e camadas de segurança.
 7. **[Simulação](Simulacao)**: cena do café no MuJoCo, que finge ser o robô nas mesmas portas, e o ajuste das câmeras.
-8. **[ER-1](ER-1)**: perguntar à visão se a tarefa foi concluída.
+8. **[ER-1](ER-1)**: perguntar à visão se a tarefa terminou, narração e tradução; como subir, a API e como treinar o LoRA dele na Athena.
 9. **[Lições aprendidas](Licoes-Aprendidas)**: os problemas reais, a causa e a correção. **Leia antes de gravar.**
 10. **[Resultados](Resultados)**: avaliações e testes no robô.
 
@@ -33,4 +33,4 @@ O UnifoLM-WLA-1.0 da Unitree no **G1 + Dex3 do Prometheus**: do VR ao robô pega
 | 8090 | PGX | cabine do executor (trajetória prevista, botão parar) |
 | 8600 | PGX | servidor WLA original (Dex1, da Unitree) |
 | 8601 | PGX | **servidor WLA Dex3 (nosso fine-tuning)** |
-| 8096 / 8098 | PGX | ER-1 decisor / ER-1 pergunta sim/não |
+| 8096 / 8098 | PGX | ER-1 decisor (antigo) / ER-1 perguntas, narração e tradução (`sobe_er1_pergunta.sh`) |
