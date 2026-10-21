@@ -215,6 +215,13 @@ def main():
                     help="só re-aponta com a mão a mais disto do objeto (perto, a mão tapa o objeto)")
     ap.add_argument("--servo-escala", type=float, default=0.6, help="reduz a imagem para o ER-1 (mais rápido)")
     ap.add_argument("--servo-z", type=float, default=0.05, help="m: plano da pegada na pelvis")
+    ap.add_argument("--servo-guia", type=int, default=1,
+                    help="1 = quando o WLA EMPACA (mão aberta parada --servo-empaca-s longe do objeto), o servo leva a mão "
+                         "devagar até --servo-acima-cm acima do ponto de pegada; lá o WLA volta a mandar (21/10: a mão "
+                         "parou 25 cm à direita da caneca por 35 s)")
+    ap.add_argument("--servo-empaca-s", type=float, default=4.0)
+    ap.add_argument("--servo-acima-cm", type=float, default=10.0)
+    ap.add_argument("--servo-vel-cm", type=float, default=4.0, help="cm/s da mão quando o servo guia")
     ap.add_argument("--servo-raio-cm", type=float, default=12.0, help="só corrige com o alvo do modelo a menos disto do objeto")
     ap.add_argument("--servo-max-cm", type=float, default=4.0, help="correção máxima (x/y)")
     ap.add_argument("--servo-ganho", type=float, default=0.6, help="fração do erro corrigida (perto do objeto)")
@@ -756,6 +763,7 @@ def main():
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
 
     servo_obj = {"P": None, "t": 0.0, "nome": None}   # último objeto apontado (pelvis, m)
+    servo_guia = {"hist": [], "ativo": False, "p": None}    # mão medida (t, p) para ver se o WLA empacou
 
     def laco_servo():
         from servo_er1 import Camera, aponta_ao_vivo, torso_na_pelvis
@@ -1025,6 +1033,31 @@ def main():
                             meta = servo_obj["P"][:2] + np.array(a.servo_offset_cm) / 100
                             dist = np.linalg.norm(meta - desejo[:2])
                             raio = a.servo_raio_cm / 100
+                            # GUIA: o WLA empacou longe do objeto -> leva a mão até acima do ponto de pegada
+                            p_ag = fk.pose(q29(), l)[1]
+                            hist = servo_guia["hist"]
+                            hist.append((tc, p_ag))
+                            while hist and tc - hist[0][0] > a.servo_empaca_s:
+                                hist.pop(0)
+                            pre = np.array([meta[0], meta[1], servo_obj["P"][2] + a.servo_acima_cm / 100])
+                            longe_xy = np.linalg.norm(p_ag[:2] - meta) > raio
+                            if a.servo_guia and not servo_guia["ativo"] and longe_xy and len(hist) > 5 \
+                                    and tc - hist[0][0] > a.servo_empaca_s - 0.2 \
+                                    and np.linalg.norm(p_ag - hist[0][1]) < 0.015:
+                                servo_guia.update(ativo=True, p=p_ag.copy())
+                                print(f"\n🧭 WLA empacou a {np.linalg.norm(p_ag[:2] - meta) * 100:.0f} cm do "
+                                      f"{servo_obj['nome']}: o servo leva a mão para cima dele", flush=True)
+                            if servo_guia["ativo"]:
+                                d = pre - servo_guia["p"]
+                                passo = a.servo_vel_cm / 100 / a.hz
+                                if np.linalg.norm(d) <= passo:
+                                    servo_guia.update(ativo=False, hist=[])
+                                    print("\n🧭 mão acima do objeto: o WLA volta a mandar", flush=True)
+                                else:
+                                    servo_guia["p"] = servo_guia["p"] + d * (passo / np.linalg.norm(d))
+                                    alvos_p[l] = np.clip(servo_guia["p"] + comp[l], caixa_lo[l], caixa_hi[l])
+                                    stats["servo"] = "guia"
+                                    dist = np.inf   # a correção fina não se soma à guia
                             if dist < raio:
                                 g = a.servo_ganho * min(1.0, 2 * (1 - dist / raio))   # entra suave na borda do raio
                                 corr = g * (meta - desejo[:2])
@@ -1033,6 +1066,8 @@ def main():
                                     corr *= (a.servo_max_cm / 100) / n
                                 alvos_p[l][:2] = np.clip(alvos_p[l][:2] + corr, caixa_lo[l][:2], caixa_hi[l][:2])
                                 stats["servo"] = np.round(corr * 100, 1)
+                        if l == "right" and servo_guia["ativo"] and (servo_obj["P"] is None or (fech_mao.get(l) or 0.0) >= 0.3):
+                            servo_guia.update(ativo=False, hist=[])   # o modelo fechou a mão ou a tarefa mudou
                         if a.z_min is not None:   # piso: a mão não desce abaixo da mesa (z na pelvis)
                             alvos_p[l][2] = max(alvos_p[l][2], a.z_min / 100)
                     # as mãos não se cruzam nem se encostam: esquerda sempre >= mao_mao_min à esquerda da direita
@@ -1160,7 +1195,7 @@ def _registra(tr, st, log, t_ini, alvo, qm, cabine, a, est, partida, fech_mao, u
               f" cm | até {info['maior_desvio_da_partida_rad']:.2f} rad da partida | mãos fecham "
               f"{info['maos_fechamento_0a1']}"
               f"{' | tronco yaw pedido %+.2f medido %+.2f rad' % (st['yaw'], qm[12]) if 'yaw' in st else ''}"
-              f"{' | 🎯 servo corrigiu %s cm' % list(st['servo']) if 'servo' in st else ''}", flush=True)
+              f"{' | 🎯 servo: %s' % (st['servo'] if isinstance(st['servo'], str) else 'corrigiu %s cm' % list(st['servo'])) if 'servo' in st else ''}", flush=True)
 
 
 if __name__ == "__main__":
