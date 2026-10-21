@@ -202,6 +202,19 @@ def main():
                     help="objetos da cena: a narração só diz um destes (ou nada)")
     ap.add_argument("--narra-cams", default="head_stereo_left",
                     help="câmeras que o ER-1 vê para dizer o objeto mais perto da mão direita")
+    # SERVO VISUAL (21/10): o ER-1 aponta o objeto na câmera da cabeça, a câmera calibrada (servo_er1.py,
+    # ~/servo_camera.json) vira o pixel em x/y na mesa; perto do objeto, com a mão ABERTA, o alvo x/y da mão
+    # direita é puxado para o objeto + --servo-offset-cm (no máx. --servo-max-cm). z continua do modelo.
+    ap.add_argument("--servo", choices=["nao", "mostra", "corrige"], default="nao",
+                    help="mostra = só imprime objeto x mão (não mexe em nada); corrige = puxa o alvo da mão direita")
+    ap.add_argument("--servo-objeto", default="auto", help="auto = pela frase (mug -> white mug, apple -> red apple)")
+    ap.add_argument("--servo-s", type=float, default=1.5, help="segundos entre as perguntas ao ER-1")
+    ap.add_argument("--servo-z", type=float, default=0.05, help="m: plano da pegada na pelvis")
+    ap.add_argument("--servo-raio-cm", type=float, default=12.0, help="só corrige com o alvo do modelo a menos disto do objeto")
+    ap.add_argument("--servo-max-cm", type=float, default=4.0, help="correção máxima (x/y)")
+    ap.add_argument("--servo-ganho", type=float, default=0.6, help="fração do erro corrigida (perto do objeto)")
+    ap.add_argument("--servo-offset-cm", type=float, nargs=2, default=[2.3, -3.6],
+                    help="(21/10: medido num quadro de pegada da caneca, 20261021_133430 #50) onde a mão (ponto da FK) fica em relação ao centro do objeto ao pegar, x y")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
@@ -310,6 +323,8 @@ def main():
     a = ap.parse_args()
     # WARNING: o servidor oficial tem um logging.info com 2 "%s" e 1 argumento, que quebra em INFO.
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
+    if a.servo_max_cm > 6.0:
+        sys.exit("--servo-max-cm > 6: recusado")
     if a.escala > 1.0 or a.caixa > 1.0 or max(a.caixa_mao) > 0.6:
         sys.exit("escala > 1,0, caixa > 1,0 rad ou caixa da mão > 0,6 m: recusado")
 
@@ -734,6 +749,47 @@ def main():
     if fala is not None and a.narra:
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
 
+    servo_obj = {"P": None, "t": 0.0, "nome": None}   # último objeto apontado (pelvis, m)
+
+    def laco_servo():
+        from servo_er1 import Camera, aponta_ao_vivo, torso_na_pelvis
+        camc = Camera.carrega()
+        print(f"🎯 servo ({a.servo}): câmera {camc.f:.0f} px, plano z={a.servo_z * 100:.0f} cm, "
+              f"raio {a.servo_raio_cm:.0f} cm, máx {a.servo_max_cm:.0f} cm", flush=True)
+        while not pare.is_set():
+            time.sleep(a.servo_s)
+            frase = (cabine.tarefa()[0] or a.tarefa or "").lower()
+            nome = a.servo_objeto
+            if nome == "auto":
+                nome = "white mug" if ("mug" in frase or "cup" in frase) else "red apple" if "apple" in frase else None
+            if not nome:
+                servo_obj["P"] = None
+                continue
+            try:
+                q = q29()
+                with gpu:
+                    px, ms = aponta_ao_vivo(a.narra, f"the {nome}")
+                if px is None:
+                    continue
+                R_tp, p_tp = torso_na_pelvis(fk, q)
+                P = camc.ponto_no_plano(px, R_tp, p_tp, a.servo_z)
+                if P is None:
+                    continue
+                servo_obj.update(P=P, t=time.time(), nome=nome)
+                mao = fk.pose(q, "right")[1]
+                d = (P - mao)[:2] * 100
+                print(f"\n🎯 {nome}: px {np.round(px)} -> ({P[0] * 100:.1f}, {P[1] * 100:.1f}) cm | mão "
+                      f"({mao[0] * 100:.1f}, {mao[1] * 100:.1f}, {mao[2] * 100:.1f}) | objeto - mão "
+                      f"({d[0]:+.1f}, {d[1]:+.1f}) cm | {ms} ms", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"\n⚠️  servo: {e}", flush=True)
+                time.sleep(5)
+
+    if a.servo != "nao":
+        if not a.narra:
+            sys.exit("--servo precisa do ER-1 (--narra http://...:8098)")
+        threading.Thread(target=laco_servo, daemon=True, name="servo").start()
+
     def narra(frase, fech):
         if fala is None:
             return
@@ -950,6 +1006,19 @@ def main():
                         # com escala < 1, só essa fração do caminho a partir da mão medida
                         desejo = pm + a.escala * (v[:3] - pm) + comp[l]
                         alvos_p[l] = np.clip(desejo, caixa_lo[l], caixa_hi[l])
+                        if a.servo == "corrige" and l == "right" and servo_obj["P"] is not None \
+                                and tc - servo_obj["t"] < 3 * a.servo_s and (fech_mao.get(l) or 0.0) < 0.3:
+                            meta = servo_obj["P"][:2] + np.array(a.servo_offset_cm) / 100
+                            dist = np.linalg.norm(meta - desejo[:2])
+                            raio = a.servo_raio_cm / 100
+                            if dist < raio:
+                                g = a.servo_ganho * min(1.0, 2 * (1 - dist / raio))   # entra suave na borda do raio
+                                corr = g * (meta - desejo[:2])
+                                n = np.linalg.norm(corr)
+                                if n > a.servo_max_cm / 100:
+                                    corr *= (a.servo_max_cm / 100) / n
+                                alvos_p[l][:2] = np.clip(alvos_p[l][:2] + corr, caixa_lo[l][:2], caixa_hi[l][:2])
+                                stats["servo"] = np.round(corr * 100, 1)
                         if a.z_min is not None:   # piso: a mão não desce abaixo da mesa (z na pelvis)
                             alvos_p[l][2] = max(alvos_p[l][2], a.z_min / 100)
                     # as mãos não se cruzam nem se encostam: esquerda sempre >= mao_mao_min à esquerda da direita
@@ -1076,7 +1145,8 @@ def _registra(tr, st, log, t_ini, alvo, qm, cabine, a, est, partida, fech_mao, u
               f"{info['delta_pedido_pelo_modelo_cm'].get('right')} cm esq {info['delta_pedido_pelo_modelo_cm'].get('left')}"
               f" cm | até {info['maior_desvio_da_partida_rad']:.2f} rad da partida | mãos fecham "
               f"{info['maos_fechamento_0a1']}"
-              f"{' | tronco yaw pedido %+.2f medido %+.2f rad' % (st['yaw'], qm[12]) if 'yaw' in st else ''}", flush=True)
+              f"{' | tronco yaw pedido %+.2f medido %+.2f rad' % (st['yaw'], qm[12]) if 'yaw' in st else ''}"
+              f"{' | 🎯 servo corrigiu %s cm' % list(st['servo']) if 'servo' in st else ''}", flush=True)
 
 
 if __name__ == "__main__":

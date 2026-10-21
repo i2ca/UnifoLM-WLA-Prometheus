@@ -29,7 +29,9 @@ fi
 # ER-1 (:8098): narração pela voz do G1 + tradução na cabine. DESLIGADO por padrão (06/10: deixa o WLA sozinho na
 # GPU); NARRA=1 sobe e liga.
 # --rgb: a câmera da cabeça já chega em RGB (sem ele a maçã vermelha saía AZUL para o ER-1, 02/10).
-if [ "${NARRA:-0}" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
+# SERVO=mostra|corrige (21/10): servo visual pelo ER-1 (servo_er1.py) — sobe o ER-1 também, sem narrar.
+[ -n "${SERVO:-}" ] && QUER_ER1=1 || QUER_ER1=${NARRA:-0}
+if [ "$QUER_ER1" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
     (cd "$UNIFOLM_WLA" && setsid nohup "$PY" -u "$WLA_DIR/er1_pergunta.py" --rgb > ~/er1_pergunta.log 2>&1 < /dev/null &)
     echo -n "⏳ carregando o ER-1 (narração)"
     for i in $(seq 1 40); do
@@ -42,6 +44,8 @@ fi
 
 cd "$UNIFOLM_WLA" || exit 1
 SEM_ER1=()
-[ "${NARRA:-0}" = "1" ] || SEM_ER1=(--narra "")
+[ "$QUER_ER1" = "1" ] || SEM_ER1=(--narra "")
+[ -n "${SERVO:-}" ] && SEM_ER1+=(--servo "$SERVO")
+[ -n "${SERVO:-}" ] && [ "${NARRA:-0}" != "1" ] && SEM_ER1+=(--narra-s 1000000)   # ER-1 só para o servo
 exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
     --braco-esquerdo ativo --juntas-travadas 20 "${SEM_ER1[@]}" "$@"
