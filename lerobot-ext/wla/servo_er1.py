@@ -146,6 +146,54 @@ def calibra(rodadas, n_por_rodada, er1, fk):
                 print(f"  {a.parent.name}/{a.name} {lado}: mão {np.round(mao * 100, 1)} cm -> pixel {np.round(px)}",
                       flush=True)
     P3, P2 = np.array(P3, np.float64), np.array(P2, np.float64)
+    np.savez(ARQ_CAMERA.with_suffix(".pares.npz"), P3=P3, P2=P2, w=w, h=h)   # refaz o ajuste sem o ER-1
+    return ajusta(P3, P2, w, h)
+
+
+# Câmera da cabeça do G1 (d435_joint no URDF): no tronco, 5,8 cm à frente, 1,8 cm à esquerda, 43 cm acima,
+# inclinada 0,83 rad (~48°) para baixo. A ZED fica no mesmo lugar: é o ponto de partida e a âncora do ajuste.
+CAM_URDF_POS = np.array([0.0576, 0.0175, 0.4299])
+CAM_URDF_PITCH = 0.8308
+
+
+def ajusta(P3, P2, w, h, ancora_cm=3.0):
+    """Ajuste robusto (soft-L1) de rotação + posição + focal, com a posição ANCORADA na do URDF (desvio
+    custa como ~ancora_cm de erro). Só o PnP livre escorregava a câmera para 48 cm à frente."""
+    from scipy.optimize import least_squares
+    from scipy.spatial.transform import Rotation as Rot
+    Ry = Rot.from_euler("y", CAM_URDF_PITCH).as_matrix()
+    M = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)     # óptico (x dir, y baixo, z frente) no link
+    R_tc0 = Ry @ M                                                # câmera -> tronco
+    x0 = np.concatenate([Rot.from_matrix(R_tc0).as_rotvec(), CAM_URDF_POS, [370.0]])
+
+    def residuos(x):
+        R_tc = Rot.from_rotvec(x[:3]).as_matrix()
+        pos, f = x[3:6], x[6]
+        Pc = (P3 - pos) @ R_tc                                    # tronco -> câmera
+        uv = np.stack([f * Pc[:, 0] / Pc[:, 2] + w / 2, f * Pc[:, 1] / Pc[:, 2] + h / 2], 1)
+        r = (uv - P2).ravel()
+        ancora = (pos - CAM_URDF_POS) / (ancora_cm / 100) * 10.0   # 1 ancora_cm ~ 10 px
+        return np.concatenate([r, ancora])
+
+    sol = least_squares(residuos, x0, loss="soft_l1", f_scale=15.0)
+    R_tc = Rot.from_rotvec(sol.x[:3]).as_matrix()
+    pos, f = sol.x[3:6], float(sol.x[6])
+    Pc = (P3 - pos) @ R_tc
+    err = np.linalg.norm(np.stack([f * Pc[:, 0] / Pc[:, 2] + w / 2, f * Pc[:, 1] / Pc[:, 2] + h / 2], 1) - P2, axis=1)
+    bons = err < 25
+    eixo = R_tc @ np.array([0, 0, 1.0])
+    R_ct = R_tc.T
+    return {"focal_px": f, "largura": int(w), "altura": int(h),
+            "R_camera_tronco": R_ct.tolist(), "t_camera_tronco": (-R_ct @ pos).tolist(),
+            "camera_no_tronco_cm": np.round(pos * 100, 1).tolist(),
+            "inclinacao_para_baixo_graus": round(float(np.degrees(np.arcsin(-eixo[2]))), 1),
+            "fov_h_graus": round(float(np.degrees(2 * np.arctan(w / 2 / f))), 1),
+            "erro_reprojecao_mediana_px": round(float(np.median(err[bons])), 1),
+            "erro_p90_px": round(float(np.percentile(err[bons], 90)), 1),
+            "pares": int(len(P2)), "pares_bons": int(bons.sum())}
+
+
+def _pnp_livre(P3, P2, w, h):
     # RANSAC: o ER-1 às vezes aponta a coisa errada (outra mão, o pulso). Focal de 200 a 800 px (FOV 44-116°).
     melhor = None
     for f in np.arange(200, 800, 2.0):
@@ -178,6 +226,8 @@ def main():
     c = sub.add_parser("calibra")
     c.add_argument("--rodadas", nargs="+", required=True)
     c.add_argument("--quadros", type=int, default=30, help="quadros por rodada")
+    r = sub.add_parser("reajusta", help="refaz o ajuste com os pares salvos (sem o ER-1)")
+    r.add_argument("--ancora-cm", type=float, default=3.0)
     t = sub.add_parser("testa", help="aponta o objeto em quadros gravados e compara com a mão (FK)")
     t.add_argument("--rodada", required=True)
     t.add_argument("--objeto", default="white mug")
@@ -185,6 +235,12 @@ def main():
     t.add_argument("--z", type=float, default=0.05, help="m: plano da pegada na pelvis")
     a = ap.parse_args()
     fk = FK()
+    if a.cmd == "reajusta":
+        d = np.load(ARQ_CAMERA.with_suffix(".pares.npz"))
+        cfg = ajusta(d["P3"], d["P2"], int(d["w"]), int(d["h"]), a.ancora_cm)
+        ARQ_CAMERA.write_text(json.dumps(cfg, indent=1))
+        print(json.dumps({k: v for k, v in cfg.items() if not k.startswith(("R_", "t_"))}, ensure_ascii=False))
+        return
     er1 = ER1Local()
     if a.cmd == "calibra":
         cfg = calibra(a.rodadas, a.quadros, er1, fk)
