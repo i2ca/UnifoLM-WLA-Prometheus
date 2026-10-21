@@ -197,7 +197,10 @@ def main():
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
     ap.add_argument("--narra-s", type=float, default=8.0, help="segundos entre as narrações do ER-1")
-    ap.add_argument("--narra-cams", default="wrist_right",
+    ap.add_argument("--narra-objetos", nargs="+",
+                    default=["white mug", "red apple", "black X", "coffee strainer", "kettle", "black pot"],
+                    help="objetos da cena: a narração só diz um destes (ou nada)")
+    ap.add_argument("--narra-cams", default="head_stereo_left",
                     help="câmeras que o ER-1 vê para dizer o objeto mais perto da mão direita")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
@@ -687,8 +690,10 @@ def main():
             antes["p"] = p
             if time.time() - falhou > 60:
                 try:
-                    q = ("What object is closest to the robot's right hand in these images? "
-                         "Answer with only the object name, at most 3 words, or 'nothing'.")
+                    # 21/10: pergunta FECHADA, pela câmera da CABEÇA. A do punho via a caneca pela metade, de perto,
+                    # e o ER-1 chamava de "bowl", "bathtub", "chair"; com a lista dos objetos da cena ele acerta.
+                    q = ("Which object is the robot's right hand closest to? Choose one: " + ", ".join(a.narra_objetos)
+                         + ", nothing.")
                     u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": q, "livre": 1, "max": 8,
                                                                          "cam": a.narra_cams})
                     with gpu:
@@ -696,7 +701,8 @@ def main():
                     if r.get("erro"):
                         raise RuntimeError(r["erro"])
                     obj = re.sub(r"[^a-zA-Z ]", "", (r.get("cru") or "")).strip().lower()
-                    if obj and obj != "nothing" and len(obj.split()) <= 4:
+                    obj = next((o for o in a.narra_objetos if o in obj), "")   # só vale um objeto da lista
+                    if obj:
                         texto += f", near the {obj.removeprefix('the ').removeprefix('a ')}"
                 except Exception as e:  # noqa: BLE001
                     falhou = time.time()
