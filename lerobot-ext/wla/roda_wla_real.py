@@ -208,7 +208,12 @@ def main():
     ap.add_argument("--servo", choices=["nao", "mostra", "corrige"], default="nao",
                     help="mostra = só imprime objeto x mão (não mexe em nada); corrige = puxa o alvo da mão direita")
     ap.add_argument("--servo-objeto", default="auto", help="auto = pela frase (mug -> white mug, apple -> red apple)")
-    ap.add_argument("--servo-s", type=float, default=1.5, help="segundos entre as perguntas ao ER-1")
+    ap.add_argument("--servo-s", type=float, default=10.0,
+                    help="segundos entre as perguntas ao ER-1 (21/10: a 1,5 s cada apontar levava 1,7 s e o WLA ficava "
+                         "~40%% do tempo esperando a GPU). Aponta ao começar a tarefa; depois só com a mão longe")
+    ap.add_argument("--servo-longe-cm", type=float, default=15.0,
+                    help="só re-aponta com a mão a mais disto do objeto (perto, a mão tapa o objeto)")
+    ap.add_argument("--servo-escala", type=float, default=0.6, help="reduz a imagem para o ER-1 (mais rápido)")
     ap.add_argument("--servo-z", type=float, default=0.05, help="m: plano da pegada na pelvis")
     ap.add_argument("--servo-raio-cm", type=float, default=12.0, help="só corrige com o alvo do modelo a menos disto do objeto")
     ap.add_argument("--servo-max-cm", type=float, default=4.0, help="correção máxima (x/y)")
@@ -757,19 +762,27 @@ def main():
         camc = Camera.carrega()
         print(f"🎯 servo ({a.servo}): câmera {camc.f:.0f} px, plano z={a.servo_z * 100:.0f} cm, "
               f"raio {a.servo_raio_cm:.0f} cm, máx {a.servo_max_cm:.0f} cm", flush=True)
+        frase_ant = None
         while not pare.is_set():
-            time.sleep(a.servo_s)
+            time.sleep(0.5)
             frase = (cabine.tarefa()[0] or a.tarefa or "").lower()
             nome = a.servo_objeto
             if nome == "auto":
                 nome = "white mug" if ("mug" in frase or "cup" in frase) else "red apple" if "apple" in frase else None
             if not nome:
-                servo_obj["P"] = None
+                servo_obj["P"], frase_ant = None, None
                 continue
+            q = q29()
+            if frase == frase_ant and servo_obj["P"] is not None:   # já sabe onde está: só re-aponta de vez em quando
+                longe = np.linalg.norm((servo_obj["P"] - fk.pose(q, "right")[1])[:2]) > a.servo_longe_cm / 100
+                if time.time() - servo_obj["t"] < a.servo_s or not longe:
+                    continue
+            if frase != frase_ant:
+                servo_obj["P"] = None   # tarefa nova: a posição antiga não vale mais
+            frase_ant = frase
             try:
-                q = q29()
                 with gpu:
-                    px, ms = aponta_ao_vivo(a.narra, f"the {nome}")
+                    px, ms = aponta_ao_vivo(a.narra, f"the {nome}", escala=a.servo_escala, max_tokens=24)
                 if px is None:
                     continue
                 R_tp, p_tp = torso_na_pelvis(fk, q)
@@ -1008,7 +1021,7 @@ def main():
                         desejo = pm + a.escala * (v[:3] - pm) + comp[l]
                         alvos_p[l] = np.clip(desejo, caixa_lo[l], caixa_hi[l])
                         if a.servo == "corrige" and l == "right" and servo_obj["P"] is not None \
-                                and tc - servo_obj["t"] < 3 * a.servo_s and (fech_mao.get(l) or 0.0) < 0.3:
+                                and (fech_mao.get(l) or 0.0) < 0.3:
                             meta = servo_obj["P"][:2] + np.array(a.servo_offset_cm) / 100
                             dist = np.linalg.norm(meta - desejo[:2])
                             raio = a.servo_raio_cm / 100

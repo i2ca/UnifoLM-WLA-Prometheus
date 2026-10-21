@@ -115,10 +115,11 @@ class ER1Local:
                         rgb.shape[1], rgb.shape[0])
 
 
-def aponta_ao_vivo(url, oque, w=640, h=480, timeout=10):
-    """Pelo servidor do ER-1 (o quadro mais novo da cabeça). Devolve (pixel ou None, ms)."""
-    u = f"{url}/pergunta?" + urllib.parse.urlencode({"q": pergunta_aponta(oque), "livre": 1, "max": 60, "lora": 0,
-                                                     "cam": "head_stereo_left"})
+def aponta_ao_vivo(url, oque, w=640, h=480, timeout=10, escala=1.0, max_tokens=60):
+    """Pelo servidor do ER-1 (o quadro mais novo da cabeça). Devolve (pixel ou None, ms).
+    max_tokens ~24 basta: o ponto vem no começo da resposta (o resto é o rótulo)."""
+    u = f"{url}/pergunta?" + urllib.parse.urlencode({"q": pergunta_aponta(oque), "livre": 1, "max": max_tokens,
+                                                     "lora": 0, "cam": "head_stereo_left", "escala": escala})
     r = json.loads(urllib.request.urlopen(u, timeout=timeout).read())
     if r.get("erro"):
         raise RuntimeError(r["erro"])
