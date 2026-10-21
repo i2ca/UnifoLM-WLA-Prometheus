@@ -1,0 +1,93 @@
+# 21/10 TREINO V2 (treina_wla_v2.py): do zero a partir do WLA-1.0-Base, TUDO descongelado (como o pré-treino da
+# Unitree: VLM com lr 10x menor), validação de 5 episódios por tarefa, tarefas balanceadas, peso na ação.
+run_id: prometheus_v2
+run_root_dir: playground/Checkpoints
+seed: 42
+wandb_entity: your_wandb_entity
+wandb_project: unifolm_wla_finetune
+is_debug: false
+
+framework:
+  name: QwenMMDiT
+  qwenvl:
+    # Overridden at launch to <base_model_dir>/tokenizer — the released
+    # checkpoint's own VLM weights are already in `trainer.pretrained_checkpoint`
+    # below, so `base_vlm` only needs to supply the architecture config +
+    # tokenizer (see `_is_weightless_base_vlm` in unifolm_wla/model/modules/vlm/QWen3.py).
+    base_vlm: /path/to/UnifoLM-WLA-1.0-Base/tokenizer
+    attn_implementation: flash_attention_2
+    vl_hidden_dim: 2560
+  robot_state_projector:
+    enabled: true
+    input_dim: 120
+    projector_hidden_size: null
+    load_from: null
+  action_model:
+    action_model_type: DiT-L
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 54
+    state_dim: 0
+    action_horizon: 30
+    repeated_diffusion_steps: 1
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    embodiment_types: ["unitree"]
+    diffusion_model_cfg:
+      cross_attention_dim: 2560
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: "ada_norm"
+      num_layers: 16
+      num_attention_heads: 32
+      attention_head_dim: 48
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_py: multi_source_datasets
+    # Overridden at launch to the --data_config_path passed to
+    # run_finetune_mmdit_frozen_vlm.sh (default: unitree.yaml).
+    data_config_path: unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_v2.yaml
+    per_device_batch_size: 1
+    num_workers: 2
+
+trainer:
+  pretrained_checkpoint: /path/to/UnifoLM-WLA-1.0-Base/checkpoints/model.safetensors   # trocado no lançamento
+  is_resume: false
+  freeze_modules: ""          # TUDO treina (VLM inteiro, visão incluída, e o DiT)
+  lora:
+    enabled: false
+  v2:
+    split: /data/mrwlker/wla_v2/descricao/split.json   # descreve_datasets.py
+    balanceia: 1.0
+    pesos: {}                 # vazio = wla_v2.PESOS_PADRAO (mão dir 3, dedos dir 2, esq 1/0,5, pernas/base 0,05)
+  cotreino:                   # perguntas do ER-1 nas nossas imagens: o VLM continua sabendo o NOME das coisas
+    jsonl: /data/mrwlker/er1_lora/dados/treino.jsonl
+    peso: 0.05
+    lote: 4
+  max_train_steps: 30000
+  num_warmup_steps: 1000
+  save_interval: 2500
+  eval_interval: 2500
+  logging_frequency: 10
+  gradient_accumulation_steps: 1
+  gradient_clipping: 1.0
+  learning_rate:
+    base: 1.0e-04
+    qwen_vl_interface: 1.0e-05     # = pré-treino da Unitree
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+  save_format: safetensors

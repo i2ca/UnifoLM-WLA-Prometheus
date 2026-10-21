@@ -82,12 +82,15 @@ def init_checkpoint_and_lora(self):
         print(f"▶ partindo de {partir} (LoRA do DiT afinado; LoRA do VLM novo)", flush=True)
     else:
         _orig_init(self)
-    # o VLM só treina o LoRA (o projetor de estado e o resto ficam como estão)
+    # o VLM só treina o LoRA (o projetor de estado e o resto ficam como estão). Sem LoRA no VLM (treino v2, tudo
+    # descongelado) não congela nada aqui: vale o freeze_modules da config.
     n = 0
-    for k, p in self.model.qwen_vl_interface.named_parameters():
-        if "lora_" not in k and p.requires_grad:
-            p.requires_grad = False
-            n += 1
+    lora_vlm = (getattr(self.config.trainer, "lora", None) or {}).get("qwen_vl_interface", {}) or {}
+    if lora_vlm.get("enabled", False) and (getattr(self.config.trainer, "lora", None) or {}).get("enabled", False):
+        for k, p in self.model.qwen_vl_interface.named_parameters():
+            if "lora_" not in k and p.requires_grad:
+                p.requires_grad = False
+                n += 1
     treina = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
     print(f"VLM: {n} tensores da base congelados | treináveis no total: {treina / 1e6:.1f} M", flush=True)
 
