@@ -11,6 +11,7 @@ treina_wla_v2.py e pelo valida_wla.py.
 """
 import inspect
 import json
+import random
 import textwrap
 from pathlib import Path
 
@@ -47,43 +48,51 @@ def instala_split(caminho, parte):
 
 
 class Balanceado(torch.utils.data.Dataset):
-    """Invólucro do SingleSourceDataset com os índices repetidos por tarefa. Fica no nível do módulo para viajar
+    """Invólucro do SingleSourceDataset com os índices repetidos por tarefa e, opcionalmente, a FRASE da tarefa
+    trocada pela descritiva (frases = {frase do dataset: frase nova}). Fica no nível do módulo para viajar
     (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
 
-    def __init__(self, ds, mapa):
-        self.ds, self.mapa = ds, mapa
+    def __init__(self, ds, mapa, frases=None):
+        self.ds, self.mapa, self.frases = ds, mapa, frases or {}
 
     def __len__(self):
         return len(self.mapa)
 
     def __getitem__(self, i):
-        return self.ds[int(self.mapa[i])]
+        item = self.ds[int(self.mapa[i])]
+        if self.frases and item.get("task") in self.frases:
+            v = self.frases[item["task"]]
+            item["task"] = random.choice(v) if isinstance(v, (list, tuple)) else v   # lista = variações sorteadas
+        return item
 
     def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
-        if nome in ("ds", "mapa") or nome.startswith("__"):
+        if nome in ("ds", "mapa", "frases") or nome.startswith("__"):
             raise AttributeError(nome)
         return getattr(self.ds, nome)
 
 
-def instala_balanceamento(alfa=1.0):
-    """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa."""
+def instala_balanceamento(alfa=1.0, frases=None):
+    """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa (0 = sem repetir). frases: troca
+    a frase da tarefa (ex.: "Pick up the white mug." -> "... from the side with the right hand upright.")."""
     from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
-    if getattr(DL, "_balanceado", None) is not None or alfa <= 0:
+    if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases):
         return
     orig = DL.create_single_source_dataset
+    if frases:
+        print("🗣️  frases da tarefa trocadas:\n" + "\n".join(f"   {k!r} -> {v!r}" for k, v in frases.items()), flush=True)
 
     def cria(*args, **kw):
         ds = orig(*args, **kw)
         tam = [len(d) for d in ds._datasets]
         maior, mapa, ini = max(tam), [], 0
         for td, n in zip(ds._task_dirs, tam):
-            k = (maior / n) ** alfa
+            k = (maior / n) ** alfa if alfa > 0 else 1.0
             idx = np.arange(ini, ini + n)
             rep = np.concatenate([np.tile(idx, int(k)), idx[: int(round((k - int(k)) * n))]])
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa))
+        return Balanceado(ds, np.concatenate(mapa), frases)
 
     DL.create_single_source_dataset = cria
     DL._balanceado = alfa
@@ -113,3 +122,16 @@ def instala_pesos_acao(pesos=None):
     setattr(cls, nome_f, ns[nome_f])
     print("🎚️  pesos da perda por parte: " + ", ".join(f"{k} {v:g}" for k, v in p.items()), flush=True)
     return vetor
+
+
+def frases_do_run(run_dir):
+    """A troca de frases que o run usou (config.full.yaml: trainer.v2.frases) — para o servidor e a validação
+    mandarem ao modelo a mesma frase do treino. Lista de variações -> a primeira."""
+    import yaml
+    run_dir = Path(run_dir)
+    full = run_dir / "config.full.yaml"
+    arq = full if full.exists() else run_dir / "config.yaml"
+    if not arq.exists():
+        return {}
+    v2 = ((yaml.safe_load(open(arq)) or {}).get("trainer", {}) or {}).get("v2", {}) or {}
+    return {k: (v[0] if isinstance(v, (list, tuple)) else v) for k, v in (v2.get("frases") or {}).items()}

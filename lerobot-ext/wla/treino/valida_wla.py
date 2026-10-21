@@ -100,6 +100,11 @@ def main():
         lotes.append(b)
         if len(lotes) >= a.lotes:
             break
+    frases_run = wla_v2.frases_do_run(run)   # o run treinou com frases descritivas? manda as mesmas
+    if frases_run:
+        for b in lotes:
+            b["task"] = [frases_run.get(t, t) for t in b["task"]]
+        print(f"frases do treino: {frases_run}", flush=True)
     frases = sorted({t for b in lotes for t in b["task"]})
     riv = rivais(frases)
     print(f"{len(lotes) * a.lote} trechos de 1 s dos episódios de VALIDAÇÃO | tarefas: {frases}\n"

@@ -23,6 +23,7 @@ Com --lora_run, --ckpt_path é o modelo BASE: o LoRA é injetado com a config do
 inferência (o from_pretrained no checkpoint afinado perde as chaves base_layer/lora_).
 """
 import argparse
+from pathlib import Path
 import logging
 import os
 import sys
@@ -51,6 +52,22 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
     def __init__(self, args):
         super().__init__(args)
         self._action_mask = mascara_dex3()
+        # 21/10: run treinado com FRASES DESCRITIVAS (trainer.v2.frases) — a cabine manda "Pick up the white mug."
+        # e o modelo recebe a frase do treino ("... from the side with the right hand upright.")
+        self._frases = {}
+        if getattr(args, "lora_run", None):
+            sys.path.insert(0, str(Path(__file__).resolve().parent / "treino"))
+            from wla_v2 import frases_do_run
+            self._frases = frases_do_run(args.lora_run)
+            for k, v in self._frases.items():
+                print(f"🗣️  frase: {k!r} -> {v!r}", flush=True)
+
+    def _build_example(self, obs):
+        ex = super()._build_example(obs)
+        if self._frases:
+            t = (ex.get("lang") or "").strip()
+            ex["lang"] = self._frases.get(t, t)
+        return ex
 
     @property
     def metadata(self):

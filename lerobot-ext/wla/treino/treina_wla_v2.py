@@ -52,7 +52,9 @@ if __name__ == "__main__":
     v2 = cfg.trainer.get("v2", {}) or {}
     if v2.get("split"):
         wla_v2.instala_split(v2["split"], "treino")
-    wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)))
+    frases = v2.get("frases", None)
+    wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)),
+                                 OmegaConf.to_container(frases, resolve=True) if frases else None)
     pesos = v2.get("pesos", None)
     wla_v2.instala_pesos_acao(OmegaConf.to_container(pesos, resolve=True) if pesos else {})
     cfg = C.T.apply_config_compat(cfg)
