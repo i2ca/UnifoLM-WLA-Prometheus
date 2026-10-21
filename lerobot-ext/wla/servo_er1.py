@@ -172,10 +172,14 @@ def ajusta(P3, P2, w, h, ancora_cm=3.0):
         Pc = (P3 - pos) @ R_tc                                    # tronco -> câmera
         uv = np.stack([f * Pc[:, 0] / Pc[:, 2] + w / 2, f * Pc[:, 1] / Pc[:, 2] + h / 2], 1)
         r = (uv - P2).ravel()
-        ancora = (pos - CAM_URDF_POS) / (ancora_cm / 100) * 10.0   # 1 ancora_cm ~ 10 px
+        r = np.sign(r) * 15.0 * np.sqrt(np.log1p((r / 15.0) ** 2))    # Cauchy SÓ na reprojeção (pontos errados)
+        ancora = (pos - CAM_URDF_POS) / (ancora_cm / 100) * 10.0     # quadrática: 1 ancora_cm ~ 10 px
         return np.concatenate([r, ancora])
 
-    sol = least_squares(residuos, x0, loss="soft_l1", f_scale=15.0)
+    # limites: posição até 10 cm da do URDF, focal 250-600 px (sem eles, o ajuste fugia para focal negativa)
+    lo = np.concatenate([[-np.inf] * 3, CAM_URDF_POS - 0.10, [250.0]])
+    hi = np.concatenate([[np.inf] * 3, CAM_URDF_POS + 0.10, [600.0]])
+    sol = least_squares(residuos, x0, bounds=(lo, hi))
     R_tc = Rot.from_rotvec(sol.x[:3]).as_matrix()
     pos, f = sol.x[3:6], float(sol.x[6])
     Pc = (P3 - pos) @ R_tc
