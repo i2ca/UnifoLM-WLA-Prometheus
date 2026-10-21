@@ -156,7 +156,7 @@ CAM_URDF_POS = np.array([0.0576, 0.0175, 0.4299])
 CAM_URDF_PITCH = 0.8308
 
 
-def ajusta(P3, P2, w, h, ancora_cm=3.0):
+def ajusta(P3, P2, w, h, ancora_cm=3.0, focal=None):
     """Ajuste robusto (soft-L1) de rotação + posição + focal, com a posição ANCORADA na do URDF (desvio
     custa como ~ancora_cm de erro). Só o PnP livre escorregava a câmera para 48 cm à frente."""
     from scipy.optimize import least_squares
@@ -177,8 +177,13 @@ def ajusta(P3, P2, w, h, ancora_cm=3.0):
         return np.concatenate([r, ancora])
 
     # limites: posição até 10 cm da do URDF, focal 250-600 px (sem eles, o ajuste fugia para focal negativa)
-    lo = np.concatenate([[-np.inf] * 3, CAM_URDF_POS - 0.10, [250.0]])
-    hi = np.concatenate([[np.inf] * 3, CAM_URDF_POS + 0.10, [600.0]])
+    # focal FIXA (focal=...) quando conhecida: a ZED no enquadramento "largo" (olho inteiro, ~90°, 640 de largura)
+    # tem ~330 px; com ela fixa, o ajuste só procura a pose e fica bem mais estável com pontos ruidosos
+    f_lo, f_hi = (focal - 1e-3, focal + 1e-3) if focal else (250.0, 600.0)
+    if focal:
+        x0[6] = focal
+    lo = np.concatenate([[-np.inf] * 3, CAM_URDF_POS - 0.10, [f_lo]])
+    hi = np.concatenate([[np.inf] * 3, CAM_URDF_POS + 0.10, [f_hi]])
     sol = least_squares(residuos, x0, bounds=(lo, hi))
     R_tc = Rot.from_rotvec(sol.x[:3]).as_matrix()
     pos, f = sol.x[3:6], float(sol.x[6])
@@ -232,6 +237,7 @@ def main():
     c.add_argument("--quadros", type=int, default=30, help="quadros por rodada")
     r = sub.add_parser("reajusta", help="refaz o ajuste com os pares salvos (sem o ER-1)")
     r.add_argument("--ancora-cm", type=float, default=3.0)
+    r.add_argument("--focal", type=float, default=None, help="px: fixa a focal (ZED 'largo' ~330)")
     t = sub.add_parser("testa", help="aponta o objeto em quadros gravados e compara com a mão (FK)")
     t.add_argument("--rodada", required=True)
     t.add_argument("--objeto", default="white mug")
@@ -241,7 +247,7 @@ def main():
     fk = FK()
     if a.cmd == "reajusta":
         d = np.load(ARQ_CAMERA.with_suffix(".pares.npz"))
-        cfg = ajusta(d["P3"], d["P2"], int(d["w"]), int(d["h"]), a.ancora_cm)
+        cfg = ajusta(d["P3"], d["P2"], int(d["w"]), int(d["h"]), a.ancora_cm, a.focal)
         ARQ_CAMERA.write_text(json.dumps(cfg, indent=1))
         print(json.dumps({k: v for k, v in cfg.items() if not k.startswith(("R_", "t_"))}, ensure_ascii=False))
         return
