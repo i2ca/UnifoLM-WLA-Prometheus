@@ -30,6 +30,8 @@ from fk_g1 import FK, _eixo  # noqa: E402
 
 ARQ_CAMERA = Path.home() / "servo_camera.json"
 PALMA = "the center of the palm of the robot's right hand (the hand on the RIGHT side of the image)"
+PALMAS = {"right": PALMA,
+          "left": "the center of the palm of the robot's left hand (the hand on the LEFT side of the image)"}
 
 
 # ── geometria ──────────────────────────────────────────────────────────────────────────────────────────
@@ -134,32 +136,40 @@ def calibra(rodadas, n_por_rodada, er1, fk):
             z = np.load(str(a).replace("_cabeca.jpg", ".npz"))
             q = z["q_medido"]
             R_tp, p_tp = torso_na_pelvis(fk, q)
-            mao = fk.pose(q, "right")[1]
-            px = er1.aponta(rgb, PALMA)
-            if px is None:
-                continue
-            P3.append(R_tp.T @ (mao - p_tp))       # a mão no referencial do TRONCO
-            P2.append(px)
-            print(f"  {a.parent.name}/{a.name}: mão {np.round(mao * 100, 1)} cm -> pixel {np.round(px)}", flush=True)
+            for lado in ("right", "left"):        # as DUAS mãos: pontos espalhados = PnP bem condicionado
+                mao = fk.pose(q, lado)[1]
+                px = er1.aponta(rgb, PALMAS[lado])
+                if px is None:
+                    continue
+                P3.append(R_tp.T @ (mao - p_tp))       # a mão no referencial do TRONCO
+                P2.append(px)
+                print(f"  {a.parent.name}/{a.name} {lado}: mão {np.round(mao * 100, 1)} cm -> pixel {np.round(px)}",
+                      flush=True)
     P3, P2 = np.array(P3, np.float64), np.array(P2, np.float64)
+    # RANSAC: o ER-1 às vezes aponta a coisa errada (outra mão, o pulso). Focal de 200 a 800 px (FOV 44-116°).
     melhor = None
-    for f in np.arange(200, 900, 2.0):
+    for f in np.arange(200, 800, 2.0):
         K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])
-        ok, rv, tv = cv2.solvePnP(P3, P2, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
-        if not ok:
+        ok, rv, tv, inl = cv2.solvePnPRansac(P3, P2, K, None, reprojectionError=20.0, iterationsCount=300,
+                                             flags=cv2.SOLVEPNP_EPNP)
+        if not ok or inl is None or len(inl) < 8:
             continue
+        inl = inl.ravel()
+        ok, rv, tv = cv2.solvePnP(P3[inl], P2[inl], K, None, rv, tv, True, cv2.SOLVEPNP_ITERATIVE)
         proj, _ = cv2.projectPoints(P3, rv, tv, K, None)
         err = np.linalg.norm(proj[:, 0] - P2, axis=1)
-        if melhor is None or np.median(err) < melhor[0]:
-            melhor = (float(np.median(err)), f, rv, tv, err)
-    e, f, rv, tv, err = melhor
+        nota = (-len(inl), float(np.median(err[inl])))           # mais pontos bons, depois menor erro
+        if melhor is None or nota < melhor[0]:
+            melhor = (nota, f, rv, tv, err, inl)
+    (_, e), f, rv, tv, err, inl = melhor[0], melhor[1], melhor[2], melhor[3], melhor[4], melhor[5]
+    e = float(np.median(err[inl]))
     R, _ = cv2.Rodrigues(rv)
     return {"focal_px": float(f), "largura": int(w), "altura": int(h),
             "R_camera_tronco": R.tolist(), "t_camera_tronco": tv.ravel().tolist(),
             "camera_no_tronco_cm": np.round((-R.T @ tv).ravel() * 100, 1).tolist(),
             "fov_h_graus": round(float(np.degrees(2 * np.arctan(w / 2 / f))), 1),
-            "erro_reprojecao_mediana_px": round(e, 1), "erro_p90_px": round(float(np.percentile(err, 90)), 1),
-            "pares": int(len(P2))}
+            "erro_reprojecao_mediana_px": round(e, 1), "erro_p90_px": round(float(np.percentile(err[inl], 90)), 1),
+            "pares": int(len(P2)), "pares_bons": int(len(inl))}
 
 
 def main():
