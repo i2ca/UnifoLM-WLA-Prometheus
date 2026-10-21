@@ -28,6 +28,9 @@ PESOS_PADRAO = {
 }
 
 
+PARTE_FORCADA = None
+
+
 def instala_split(caminho, parte):
     from unifolm_wla.dataloader.multi_source_dataset import lerobot_wrapper as LW
     split = json.load(open(caminho))
@@ -38,9 +41,10 @@ def instala_split(caminho, parte):
 
     def __init__(self, *args, **kw):
         nome = Path(kw.get("root") or "").name
+        p = PARTE_FORCADA or parte   # a validação dentro do treino cria o dataset de "val" com o ajuste já instalado
         if nome in split and kw.get("episodes") is None:
-            kw["episodes"] = sorted(int(e) for e in split[nome][parte])
-            print(f"📂 {nome}: {parte} = {len(kw['episodes'])} episódios", flush=True)
+            kw["episodes"] = sorted(int(e) for e in split[nome][p])
+            print(f"📂 {nome}: {p} = {len(kw['episodes'])} episódios", flush=True)
         orig(self, *args, **kw)
 
     cls.__init__ = __init__
@@ -135,3 +139,120 @@ def frases_do_run(run_dir):
         return {}
     v2 = ((yaml.safe_load(open(arq)) or {}).get("trainer", {}) or {}).get("v2", {}) or {}
     return {k: (v[0] if isinstance(v, (list, tuple)) else v) for k, v in (v2.get("frases") or {}).items()}
+
+
+# ── validação (dentro do treino e no valida_wla.py) ─────────────────────────────────────────────────────────
+def objeto(frase):
+    f = (frase or "").lower()
+    return "caneca" if ("mug" in f or "cup" in f) else "maca" if "apple" in f else "?"
+
+
+def rivais(frases):
+    """frase -> frase de OUTRA tarefa com o outro objeto (caneca <-> maçã); prefere a mais parecida."""
+    r = {}
+    for f in frases:
+        outras = [g for g in frases if objeto(g) not in (objeto(f), "?")] or [g for g in frases if g != f]
+        if outras:
+            pal = set(f.lower().split())
+            r[f] = max(outras, key=lambda g: len(pal & set(g.lower().split())))
+    return r
+
+
+def lotes_validacao(dados_cfg, n_lotes, lote, frases_fixas=None, cache=None, leitores=16):
+    """Lotes FIXOS dos episódios de validação (o split já instalado). frases_fixas: a frase do dataset -> a do treino
+    (a 1ª variação), igual para todos os checkpoints. cache: arquivo .pt — com ele pronto, carrega em segundos
+    (21/10: montar no passo 0, um a um, levou > 10 min e o NCCL derrubou o treino esperando o processo 0)."""
+    global PARTE_FORCADA
+    if cache and Path(cache).exists():
+        return torch.load(cache, weights_only=False)
+    from unifolm_wla.dataloader.multi_source_dataset.dataloader import collate_fn, create_training_dataloader
+    PARTE_FORCADA = "val"
+    try:
+        _, ds = create_training_dataloader(dados_cfg, batch_size=lote, num_workers=0, pin_memory=False, shuffle=False)
+    finally:
+        PARTE_FORCADA = None
+    if isinstance(ds, Balanceado):
+        ds = ds.ds   # sem repetir quadros nem sortear a variação da frase
+    idx = torch.randperm(len(ds), generator=torch.Generator().manual_seed(0))[: n_lotes * lote].tolist()
+    dl = torch.utils.data.DataLoader(torch.utils.data.Subset(ds, idx), batch_size=lote, shuffle=False,
+                                     num_workers=leitores, collate_fn=collate_fn)
+    lotes = []
+    for b in dl:
+        if frases_fixas:
+            b["task"] = [frases_fixas.get(t, t) for t in b["task"]]
+        lotes.append(b)
+    if cache:
+        Path(cache).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(lotes, cache)
+    return lotes
+
+
+def _orig_frase(frases_fixas):
+    inv = {}
+    for k, v in (frases_fixas or {}).items():
+        inv[v[0] if isinstance(v, (list, tuple)) else v] = k
+    return inv
+
+
+@torch.no_grad()
+def metricas_validacao(m, lotes, troca_frase=True):
+    """erro da mão direita (cm, no trecho e no fim), dedos, fecha no tempo, troca de frase — total e por objeto."""
+    from unifolm_wla.dataloader.multi_source_dataset.action_mapping import SLICES
+    sx, fd = SLICES["right_xyz_rotvec"], SLICES["right_fig6d"]
+    xyz = slice(sx.start, sx.start + 3)
+    riv = rivais(sorted({t for b in lotes for t in b["task"]}))
+    H = m.action_horizon
+    A = {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha")}
+    por = {}
+    for i, b in enumerate(lotes):
+        torch.manual_seed(1000 + i)
+        pred = m.predict_action(examples=b)["normalized_actions"]
+        alvo = b["action"].cpu().numpy()[:, -H:, :]
+        esc = b["action_norm_scale"].cpu().numpy()[:, None, :]
+        cm = np.linalg.norm((pred - alvo)[:, :, xyz] * esc[:, :, xyz], axis=-1) * 100
+        fp, fa = (pred[:, :, fd].mean(-1) + 1) / 2 > 0.5, (alvo[:, :, fd].mean(-1) + 1) / 2 > 0.5
+        tr = None
+        if troca_frase:
+            bt = dict(b)
+            bt["task"] = [riv.get(t, t) for t in b["task"]]
+            torch.manual_seed(1000 + i)
+            pt = m.predict_action(examples=bt)["normalized_actions"]
+            tr = np.linalg.norm((pt - alvo)[:, :, xyz] * esc[:, :, xyz], axis=-1).mean(1) * 100
+        for j, t in enumerate(b["task"]):
+            v = {"cm": cm[j].mean(), "cm_fim": cm[j, -1], "dedos": (fp[j] == fa[j]).mean()}
+            if tr is not None and riv.get(t, t) != t:
+                v["lingua"] = float(cm[j].mean() < tr[j])
+                v["razao"] = tr[j] / max(cm[j].mean(), 1e-3)
+            if (~fa[j][0]) and fa[j].any():
+                v["fecha"] = float(fp[j].any() and abs(int(np.argmax(fp[j])) - int(np.argmax(fa[j]))) <= 9)
+            e = por.setdefault(objeto(t), {k: [] for k in A})
+            for k, x in v.items():
+                A[k].append(float(x))
+                e[k].append(float(x))
+    nomes = {"cm": "erro_mao_dir_cm", "cm_fim": "erro_mao_dir_fim_cm", "dedos": "dedos_dir_acerto_%",
+             "lingua": "lingua_%", "razao": "lingua_razao", "fecha": "fecha_no_tempo_%"}
+
+    def resume(D):
+        r = {}
+        for k, x in D.items():
+            if x:
+                val = np.median(x) if k == "razao" else np.mean(x)
+                r[nomes[k]] = float(val * (100 if k in ("dedos", "lingua", "fecha") else 1))
+        return r
+    r = resume(A)
+    for o, D in por.items():
+        r.update({f"{o}/{k}": v for k, v in resume(D).items()})
+    return r
+
+
+if __name__ == "__main__":   # prepara o cache da validação ANTES do treino (CPU):  python wla_v2.py <config_treino.yaml>
+    import sys as _s
+    import yaml as _y
+    _s.path.insert(0, ".")
+    cfg = _y.safe_load(open(_s.argv[1]))
+    v2 = cfg["trainer"]["v2"]
+    instala_split(v2["split"], "treino")
+    fixas = {k: (v[0] if isinstance(v, list) else v) for k, v in (v2.get("frases") or {}).items()}
+    lt = lotes_validacao(cfg["datasets"]["vla_data"]["data_config_path"], v2.get("val_lotes", 24), v2.get("val_lote", 4),
+                         fixas, v2["val_cache"])
+    print(f"✅ {len(lt)} lotes de validação em {v2['val_cache']}: {sorted({t for b in lt for t in b['task']})}")

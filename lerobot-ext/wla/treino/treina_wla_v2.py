@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import treina_cotreino_wla as C  # noqa: E402  (LoRA regex, partir_de, co-treino de perguntas)
 import wla_v2  # noqa: E402
+from omegaconf import OmegaConf  # noqa: E402
 
 _init_ck = C.T.VLATrainer.init_checkpoint_and_lora
 
@@ -40,6 +41,43 @@ def init_checkpoint_and_lora(self):
 
 
 C.T.VLATrainer.init_checkpoint_and_lora = init_checkpoint_and_lora
+
+# ── VALIDAÇÃO DENTRO DO TREINO (21/10): a cada trainer.v2.val_intervalo passos (e no passo 0 = o modelo base), o
+# processo 0 roda o modelo que está treinando nos episódios de VALIDAÇÃO (lotes fixos) e manda val/* ao wandb:
+# erro da mão direita em cm, dedos, fecha no tempo e a troca de frase (lingua_%). Sem outra GPU nem outra cópia.
+_log = C.T.VLATrainer._log_metrics
+
+
+def _log_metrics(self, metrics):
+    import torch.distributed as dist
+    v2 = self.config.trainer.get("v2", {}) or {}
+    iv, s = int(v2.get("val_intervalo", 500)), self.completed_steps
+    if iv > 0 and v2.get("split") and s % iv == 0 and getattr(self, "_val_feito", -1) != s:
+        self._val_feito = s
+        if dist.get_rank() == 0:
+            import time
+            t0 = time.time()
+            m = self.accelerator.unwrap_model(self.model)
+            if not hasattr(self, "_val_lotes"):
+                fr = v2.get("frases", None)
+                fr = OmegaConf.to_container(fr, resolve=True) if fr else None
+                fixas = {k: (v[0] if isinstance(v, list) else v) for k, v in (fr or {}).items()}
+                self._val_lotes = wla_v2.lotes_validacao(self.config.datasets.vla_data.data_config_path,
+                                                         int(v2.get("val_lotes", 24)), int(v2.get("val_lote", 4)), fixas,
+                                                         v2.get("val_cache"))
+            era = m.training
+            m.eval()
+            try:
+                r = wla_v2.metricas_validacao(m, self._val_lotes, bool(v2.get("val_troca_frase", True)))
+            finally:
+                m.train(era)
+            metrics.update({f"val/{k}": v for k, v in r.items()})
+            print(f"🧪 validação passo {s} ({time.time() - t0:.0f} s): " +
+                  " | ".join(f"{k} {v:.2f}" for k, v in r.items() if "/" not in k), flush=True)
+    _log(self, metrics)
+
+
+C.T.VLATrainer._log_metrics = _log_metrics
 
 if __name__ == "__main__":
     import argparse

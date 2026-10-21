@@ -71,6 +71,10 @@ trainer:
   v2:
     split: /data/mrwlker/wla_v2/descricao/split.json   # descreve_datasets.py
     balanceia: 1.0
+    val_intervalo: 500        # validação nos episódios separados a cada N passos (e no 0) -> val/* no wandb
+    val_lotes: 24             # 24 x 4 = 96 trechos de 1 s, fixos
+    val_lote: 4
+    val_cache: /data/mrwlker/wla_v2/val_v3.pt   # pronto ANTES do treino: python wla_v2.py <esta config>
     pesos: {}                 # vazio = wla_v2.PESOS_PADRAO (mão dir 3, dedos dir 2, esq 1/0,5, pernas/base 0,05)
     # a frase do dataset -> frases DESCRITIVAS (sorteadas; a 1ª é a que o servidor manda no robô). A posição da pega
     # é a mesma para caneca e maçã; o que muda é o giro do punho (caneca ~-7°, maçã ~-80°) — agora está na frase.

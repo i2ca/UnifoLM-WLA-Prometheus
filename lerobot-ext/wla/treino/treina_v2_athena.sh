@@ -20,6 +20,8 @@ if [ ! -f "$DESC/split.json" ]; then
 fi
 cat "$DESC/DATASETS.md" | grep -v "^  - ep" | head -80
 cd "$WLA"
+# lotes de validação prontos ANTES do treino (montar no passo 0 travou o treino por timeout do NCCL)
+CUDA_VISIBLE_DEVICES="" "$PY" "$REPO/wla_v2.py" "./unifolm_wla/config/training/${CONFIG_V:-prometheus_v2}.yaml"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=${WANDB_MODE:-online} WANDB_LOG_MODEL=false WANDB_DISABLE_CODE=true WANDB_DISABLE_GIT=true
 N=$(echo "${GPU:-0,1}" | tr ',' '\n' | wc -l)
