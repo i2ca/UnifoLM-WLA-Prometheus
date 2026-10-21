@@ -22,7 +22,7 @@ cd "$WLA"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=${WANDB_MODE:-online} WANDB_LOG_MODEL=false WANDB_DISABLE_CODE=true WANDB_DISABLE_GIT=true
 N=$(echo "${GPU:-0,1}" | tr ',' '\n' | wc -l)
-GPU=${GPU:-0,1} NPROC=$N LOTE=${LOTE:-8} LEITORES=${LEITORES:-32} PASSOS=${PASSOS:-30000} RUN_ID=$RUN_ID \
+GPU=${GPU:-0,1} NPROC=$N LOTE=${LOTE:-4} ACUMULA=${ACUMULA:-2} LEITORES=${LEITORES:-32} PASSOS=${PASSOS:-30000} RUN_ID=$RUN_ID \
 TREINO_PY=treina_wla_v2.py CONFIG=./unifolm_wla/config/training/prometheus_v2.yaml \
 DADOS=./unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_v2.yaml \
     bash treina_lora_prometheus_dex3.sh --trainer.v2.split "$DESC/split.json" "$@"

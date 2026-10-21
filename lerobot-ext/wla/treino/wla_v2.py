@@ -46,35 +46,47 @@ def instala_split(caminho, parte):
     cls._split_v2 = parte
 
 
+class Balanceado(torch.utils.data.Dataset):
+    """Invólucro do SingleSourceDataset com os índices repetidos por tarefa. Fica no nível do módulo para viajar
+    (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
+
+    def __init__(self, ds, mapa):
+        self.ds, self.mapa = ds, mapa
+
+    def __len__(self):
+        return len(self.mapa)
+
+    def __getitem__(self, i):
+        return self.ds[int(self.mapa[i])]
+
+    def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
+        if nome in ("ds", "mapa") or nome.startswith("__"):
+            raise AttributeError(nome)
+        return getattr(self.ds, nome)
+
+
 def instala_balanceamento(alfa=1.0):
     """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa."""
-    from unifolm_wla.dataloader.multi_source_dataset import single_source_dataset as SS
-    cls = SS.SingleSourceDataset
-    if getattr(cls, "_balanceado", None) is not None or alfa <= 0:
+    from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
+    if getattr(DL, "_balanceado", None) is not None or alfa <= 0:
         return
-    orig_init, orig_get = cls.__init__, cls.__getitem__
+    orig = DL.create_single_source_dataset
 
-    def __init__(self, *args, **kw):
-        orig_init(self, *args, **kw)
-        tam = [len(d) for d in self._datasets]
+    def cria(*args, **kw):
+        ds = orig(*args, **kw)
+        tam = [len(d) for d in ds._datasets]
         maior, mapa, ini = max(tam), [], 0
-        for td, n in zip(self._task_dirs, tam):
+        for td, n in zip(ds._task_dirs, tam):
             k = (maior / n) ** alfa
             idx = np.arange(ini, ini + n)
             rep = np.concatenate([np.tile(idx, int(k)), idx[: int(round((k - int(k)) * n))]])
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        self._mapa_v2 = np.concatenate(mapa)
+        return Balanceado(ds, np.concatenate(mapa))
 
-    def __len__(self):
-        return len(self._mapa_v2)
-
-    def __getitem__(self, i):
-        return orig_get(self, int(self._mapa_v2[i]))
-
-    cls.__init__, cls.__len__, cls.__getitem__ = __init__, __len__, __getitem__
-    cls._balanceado = alfa
+    DL.create_single_source_dataset = cria
+    DL._balanceado = alfa
 
 
 def instala_pesos_acao(pesos=None):

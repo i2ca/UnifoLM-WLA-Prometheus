@@ -26,6 +26,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import treina_cotreino_wla as C  # noqa: E402  (LoRA regex, partir_de, co-treino de perguntas)
 import wla_v2  # noqa: E402
 
+_init_ck = C.T.VLATrainer.init_checkpoint_and_lora
+
+
+def init_checkpoint_and_lora(self):
+    """Com o VLM inteiro treinando, as ativações dele não cabem nos 80 GB (lote 4 estourou): recalcula no backward."""
+    _init_ck(self)
+    if (self.config.trainer.get("v2", {}) or {}).get("checkpoint_vlm", True):
+        self.model.qwen_vl_interface.model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False})
+        self.model.qwen_vl_interface.model.config.use_cache = False
+        print("♻️  gradient checkpointing no VLM", flush=True)
+
+
+C.T.VLATrainer.init_checkpoint_and_lora = init_checkpoint_and_lora
+
 if __name__ == "__main__":
     import argparse
 
@@ -38,7 +53,8 @@ if __name__ == "__main__":
     if v2.get("split"):
         wla_v2.instala_split(v2["split"], "treino")
     wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)))
-    wla_v2.instala_pesos_acao(OmegaConf.to_container(v2.get("pesos", {}) or {}, resolve=True))
+    pesos = v2.get("pesos", None)
+    wla_v2.instala_pesos_acao(OmegaConf.to_container(pesos, resolve=True) if pesos else {})
     cfg = C.T.apply_config_compat(cfg)
     cfg.config_yaml = args.config_yaml
     C.T.main(cfg)

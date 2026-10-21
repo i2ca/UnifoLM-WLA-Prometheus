@@ -1,9 +1,9 @@
 # 21/10 TREINO V2 (treina_wla_v2.py): do zero a partir do WLA-1.0-Base, TUDO descongelado (como o pré-treino da
-# Unitree: VLM com lr 10x menor), validação de 5 episódios por tarefa, tarefas balanceadas, peso na ação.
+# Unitree: VLM com lr 10x menor; só a torre de visão congelada), validação de 5 episódios por tarefa, tarefas balanceadas, peso na ação.
 run_id: prometheus_v2
 run_root_dir: playground/Checkpoints
 seed: 42
-wandb_entity: your_wandb_entity
+wandb_entity: prometheus-lcad
 wandb_project: unifolm_wla_finetune
 is_debug: false
 
@@ -61,7 +61,10 @@ datasets:
 trainer:
   pretrained_checkpoint: /path/to/UnifoLM-WLA-1.0-Base/checkpoints/model.safetensors   # trocado no lançamento
   is_resume: false
-  freeze_modules: ""          # TUDO treina (VLM inteiro, visão incluída, e o DiT)
+  # VLM (linguagem) + DiT treinam inteiros. A TORRE DE VISÃO fica congelada: treinando ela, a perda virava NaN no
+  # 3º passo (21/10, testado: VLM todo congelado ok, só visão congelada ok, tudo descongelado NaN) — e com ~200
+  # episódios é a parte que mais decoraria as imagens.
+  freeze_modules: "qwen_vl_interface.model.model.visual"
   lora:
     enabled: false
   v2:
