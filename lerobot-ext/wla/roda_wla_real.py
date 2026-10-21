@@ -213,8 +213,9 @@ def main():
     ap.add_argument("--servo-raio-cm", type=float, default=12.0, help="só corrige com o alvo do modelo a menos disto do objeto")
     ap.add_argument("--servo-max-cm", type=float, default=4.0, help="correção máxima (x/y)")
     ap.add_argument("--servo-ganho", type=float, default=0.6, help="fração do erro corrigida (perto do objeto)")
-    ap.add_argument("--servo-offset-cm", type=float, nargs=2, default=[2.3, -3.6],
-                    help="(21/10: medido num quadro de pegada da caneca, 20261021_133430 #50) onde a mão (ponto da FK) fica em relação ao centro do objeto ao pegar, x y")
+    ap.add_argument("--servo-offset-cm", type=float, nargs=2, default=[0.0, -4.0],
+                    help="(21/10: na pegada que FALHOU, 20261021_133430 #50-64, a mão ficou em +2 x, -4 y da caneca; "
+                         "mantido o lado, x zerado) onde a mão (ponto da FK) fica em relação ao centro do objeto ao pegar, x y")
     ap.add_argument("--narra-repete-s", type=float, default=60.0,
                     help="a mesma frase do ER-1 (reaching = reach) só é dita de novo depois disto")
     ap.add_argument("--peso-rot", type=float, default=0.15,
