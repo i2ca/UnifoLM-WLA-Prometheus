@@ -51,36 +51,140 @@ def instala_split(caminho, parte):
     cls._split_v2 = parte
 
 
+
+# ── MARCADOR (v4, 22/10): o alvo desenhado na imagem da cabeça — o WLA segue a imagem muito melhor que a frase ──
+COR_MARCADOR = (1.0, 0.0, 1.0)   # magenta: não existe na cena
+
+
+def desenha_marcador(img, x, y, raio=0.035, espessura=3.0):
+    """Anel no ponto (x, y) em 0..1 da imagem. img: tensor CHW float 0..1 (treino) ou numpy HWC uint8 (robô).
+    Devolve uma cópia."""
+    if isinstance(img, torch.Tensor):
+        c, h, w = img.shape
+        yy, xx = torch.meshgrid(torch.arange(h, dtype=torch.float32), torch.arange(w, dtype=torch.float32), indexing="ij")
+        d = ((xx - x * w) ** 2 + (yy - y * h) ** 2).sqrt()
+        anel = (d - raio * w).abs() <= espessura / 2
+        out = img.clone()
+        for k in range(min(c, 3)):
+            out[k][anel] = COR_MARCADOR[k] * (1.0 if out.max() <= 1.0 + 1e-3 else 255.0)
+        return out
+    h, w = img.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    d = np.sqrt((xx - x * w) ** 2 + (yy - y * h) ** 2)
+    out = img.copy()
+    out[np.abs(d - raio * w) <= espessura / 2] = (np.array(COR_MARCADOR) * 255).astype(out.dtype)
+    return out
+
+
+class Marcadores:
+    """Onde desenhar o marcador em cada quadro: os pontos que o ER-1 deu (alvos.jsonl, a cada 10 quadros) e a fase
+    pelo episodios.jsonl — o objeto a PEGAR até a pega (+10 quadros), depois o lugar de COLOCAR (se a tarefa tem),
+    depois nada. É a mesma regra que o robô usa ao vivo (pegar até os dedos fecharem)."""
+
+    def __init__(self, alvos_jsonl, episodios_jsonl):
+        self.pts, self.pega = {}, {}
+        for d in map(json.loads, open(episodios_jsonl)):
+            self.pega[(d["dataset"], d["episodio"])] = (None if d.get("comeca_segurando") else d.get("pega_quadro"))
+        for d in map(json.loads, open(alvos_jsonl)):
+            if d.get("ponto"):
+                self.pts.setdefault((d["dataset"], d["episodio"], d["alvo"]), []).append(
+                    (d["quadro"], d["ponto"][0] / 1000, d["ponto"][1] / 1000))
+        # SALTOS ISOLADOS do ER-1 (um quadro aponta outra coisa e o seguinte volta): mediana móvel de 5 pontos
+        # (~1,7 s). Não é a mediana do episódio: a cabeça gira com a cintura e o alvo anda na imagem de verdade.
+        self.corrigidos = 0
+        for k, v in self.pts.items():
+            v.sort()
+            a = np.array([[x, y] for _, x, y in v])
+            for i in range(len(v)):
+                viz = a[max(0, i - 2):i + 3]
+                med = np.median(viz, 0)
+                if len(viz) >= 3 and np.linalg.norm(a[i] - med) > 0.08:
+                    v[i] = (v[i][0], float(med[0]), float(med[1]))
+                    self.corrigidos += 1
+
+    def ponto(self, ds, ep, f):
+        pg = self.pega.get((ds, ep))
+        for alvo in ("pegar", "colocar"):
+            lst = self.pts.get((ds, ep, alvo))
+            if not lst:
+                continue
+            if alvo == "pegar" and pg is not None and f > pg + 10:
+                continue
+            if alvo == "colocar" and lst[0][0] > f + 10:
+                continue
+            q = min(lst, key=lambda t: abs(t[0] - f))
+            return q[1], q[2]
+        return None
+
+
 class Balanceado(torch.utils.data.Dataset):
     """Invólucro do SingleSourceDataset com os índices repetidos por tarefa e, opcionalmente, a FRASE da tarefa
     trocada pela descritiva (frases = {frase do dataset: frase nova}). Fica no nível do módulo para viajar
     (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
 
-    def __init__(self, ds, mapa, frases=None):
+    def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True):
         self.ds, self.mapa, self.frases = ds, mapa, frases or {}
+        self.marcadores, self.papel, self.treino = marcadores, papel_cabeca, treino
+        self.ep_quadro = None
+        if marcadores is not None:   # episódio e quadro de cada índice local (para achar o ponto do ER-1)
+            self.nomes = [Path(td).name for td in ds._task_dirs]
+            self.ep_quadro = []
+            for d in ds._datasets:
+                t = d.hf_dataset.data
+                self.ep_quadro.append((t.column("episode_index").to_numpy(), t.column("frame_index").to_numpy()))
+            self.cum = np.array(ds._cum_lengths)
 
     def __len__(self):
         return len(self.mapa)
 
+    def onde(self, j):
+        k = int(np.searchsorted(self.cum, j, side="right"))
+        local = j - (self.cum[k - 1] if k > 0 else 0)
+        ep, fr = self.ep_quadro[k]
+        return self.nomes[k], int(ep[local]), int(fr[local])
+
+    def marca(self, item, j, sortear):
+        """Desenha o marcador do quadro j na imagem da cabeça. sortear: tremido de ~1,5% e 10% sem marcador."""
+        p = self.marcadores.ponto(*self.onde(j))
+        if p is None or (sortear and random.random() < 0.1):
+            item["marcador"] = torch.tensor([-1.0, -1.0])
+            return item
+        x, y = p
+        if sortear:
+            x, y = x + random.gauss(0, 0.015), y + random.gauss(0, 0.015)
+        x, y = float(np.clip(x, 0.02, 0.98)), float(np.clip(y, 0.02, 0.98))
+        item["cabeca_limpa"] = item["images"][self.papel]
+        item["images"][self.papel] = desenha_marcador(item["images"][self.papel], x, y)
+        item["marcador"] = torch.tensor([x, y])
+        return item
+
     def __getitem__(self, i):
-        item = self.ds[int(self.mapa[i])]
+        j = int(self.mapa[i])
+        item = self.ds[j]
         if self.frases and item.get("task") in self.frases:
             v = self.frases[item["task"]]
             item["task"] = random.choice(v) if isinstance(v, (list, tuple)) else v   # lista = variações sorteadas
+        if self.marcadores is not None:
+            item = self.marca(item, j, sortear=self.treino)
+            item.pop("cabeca_limpa", None)
         return item
 
     def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
-        if nome in ("ds", "mapa", "frases") or nome.startswith("__"):
+        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum") \
+                or nome.startswith("__"):
             raise AttributeError(nome)
         return getattr(self.ds, nome)
 
 
-def instala_balanceamento(alfa=1.0, frases=None):
+def instala_balanceamento(alfa=1.0, frases=None, marcadores=None):
     """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa (0 = sem repetir). frases: troca
     a frase da tarefa (ex.: "Pick up the white mug." -> "... from the side with the right hand upright.")."""
     from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
-    if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases):
+    if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases and marcadores is None):
         return
+    if marcadores is not None:
+        print(f"🎯 marcador na imagem da cabeça: {len(marcadores.pts)} trechos rotulados pelo ER-1 "
+              f"({marcadores.corrigidos} saltos isolados corrigidos)", flush=True)
     orig = DL.create_single_source_dataset
     if frases:
         print("🗣️  frases da tarefa trocadas:\n" + "\n".join(f"   {k!r} -> {v!r}" for k, v in frases.items()), flush=True)
@@ -96,7 +200,7 @@ def instala_balanceamento(alfa=1.0, frases=None):
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa), frases)
+        return Balanceado(ds, np.concatenate(mapa), frases, marcadores)
 
     DL.create_single_source_dataset = cria
     DL._balanceado = alfa
@@ -171,11 +275,13 @@ def lotes_validacao(dados_cfg, n_lotes, lote, frases_fixas=None, cache=None, lei
         _, ds = create_training_dataloader(dados_cfg, batch_size=lote, num_workers=0, pin_memory=False, shuffle=False)
     finally:
         PARTE_FORCADA = None
-    if isinstance(ds, Balanceado):
-        ds = ds.ds   # sem repetir quadros nem sortear a variação da frase
-    idx = torch.randperm(len(ds), generator=torch.Generator().manual_seed(0))[: n_lotes * lote].tolist()
-    dl = torch.utils.data.DataLoader(torch.utils.data.Subset(ds, idx), batch_size=lote, shuffle=False,
-                                     num_workers=leitores, collate_fn=collate_fn)
+    base = ds.ds if isinstance(ds, Balanceado) else ds   # sem repetir quadros nem sortear a variação da frase
+    vds = base
+    if isinstance(ds, Balanceado) and ds.marcadores is not None:   # v4: marcador SEM tremido + a cabeça limpa
+        vds = ValMarcada(Balanceado(base, np.arange(len(base)), None, ds.marcadores, ds.papel, treino=False))
+    idx = torch.randperm(len(base), generator=torch.Generator().manual_seed(0))[: n_lotes * lote].tolist()
+    dl = torch.utils.data.DataLoader(torch.utils.data.Subset(vds, idx), batch_size=lote, shuffle=False,
+                                     num_workers=leitores, collate_fn=_collate_val)
     lotes = []
     for b in dl:
         if frases_fixas:
@@ -185,6 +291,31 @@ def lotes_validacao(dados_cfg, n_lotes, lote, frases_fixas=None, cache=None, lei
         Path(cache).parent.mkdir(parents=True, exist_ok=True)
         torch.save(lotes, cache)
     return lotes
+
+
+class ValMarcada(torch.utils.data.Dataset):
+    """Validação do v4: marcador fixo, guardando a imagem da cabeça LIMPA para mover o marcador depois."""
+
+    def __init__(self, bal):
+        self.bal = bal
+
+    def __len__(self):
+        return len(self.bal.mapa)
+
+    def __getitem__(self, j):
+        item = self.bal.ds[j]
+        item = self.bal.marca(item, j, sortear=False)
+        if "cabeca_limpa" not in item:
+            item["cabeca_limpa"] = item["images"][self.bal.papel]
+        return item
+
+
+def _collate_val(itens):
+    from unifolm_wla.dataloader.multi_source_dataset.dataloader import collate_fn
+    extra = {k: torch.stack([it.pop(k) for it in itens]) for k in ("marcador", "cabeca_limpa") if k in itens[0]}
+    b = collate_fn(itens)
+    b.update(extra)
+    return b
 
 
 def _orig_frase(frases_fixas):
@@ -225,19 +356,49 @@ def metricas_validacao(m, lotes, troca_frase=True):
                 v["razao"] = tr[j] / max(cm[j].mean(), 1e-3)
             if (~fa[j][0]) and fa[j].any():
                 v["fecha"] = float(fp[j].any() and abs(int(np.argmax(fp[j])) - int(np.argmax(fa[j]))) <= 9)
-            e = por.setdefault(objeto(t), {k: [] for k in A})
+            e = por.setdefault(objeto(t), {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha")})
             for k, x in v.items():
                 A[k].append(float(x))
                 e[k].append(float(x))
+    # SEGUE O MARCADOR (v4): o mesmo quadro com o marcador 12% mais à DIREITA na imagem (= à direita do robô, -y):
+    # a mão prevista no fim do trecho tem que ir para a direita. marcador_sentido_% = em quantos foi (> 0,5 cm),
+    # marcador_desloca_cm = quanto a ponta da trajetória mudou.
+    if "marcador" in lotes[0]:
+        A["m_sentido"], A["m_desloca"] = [], []
+        y_i = sx.start + 1
+        for i, b in enumerate(lotes):
+            ok = (b["marcador"][:, 0] >= 0).numpy()
+            if not ok.any():
+                continue
+            esc = b["action_norm_scale"].cpu().numpy()
+            torch.manual_seed(1000 + i)
+            p0 = m.predict_action(examples=b)["normalized_actions"]
+            bm = dict(b)
+            bm["images"] = dict(b["images"])
+            cab = b["cabeca_limpa"].clone()
+            papel = next(r for r in b["images"] if "head" in r)
+            for j in range(len(cab)):
+                if ok[j]:
+                    x, y = b["marcador"][j].tolist()
+                    cab[j] = desenha_marcador(cab[j], min(x + 0.12, 0.98), y)
+            bm["images"][papel] = cab
+            torch.manual_seed(1000 + i)
+            p1 = m.predict_action(examples=bm)["normalized_actions"]
+            for j in np.nonzero(ok)[0]:
+                dy = (p1[j, -1, y_i] - p0[j, -1, y_i]) * esc[j, y_i] * 100
+                dfim = np.linalg.norm((p1[j, -1, xyz] - p0[j, -1, xyz]) * esc[j, xyz]) * 100
+                A["m_sentido"].append(float(dy < -0.5))
+                A["m_desloca"].append(float(dfim))
     nomes = {"cm": "erro_mao_dir_cm", "cm_fim": "erro_mao_dir_fim_cm", "dedos": "dedos_dir_acerto_%",
-             "lingua": "lingua_%", "razao": "lingua_razao", "fecha": "fecha_no_tempo_%"}
+             "lingua": "lingua_%", "razao": "lingua_razao", "fecha": "fecha_no_tempo_%",
+             "m_sentido": "marcador_sentido_%", "m_desloca": "marcador_desloca_cm"}
 
     def resume(D):
         r = {}
         for k, x in D.items():
             if x:
                 val = np.median(x) if k == "razao" else np.mean(x)
-                r[nomes[k]] = float(val * (100 if k in ("dedos", "lingua", "fecha") else 1))
+                r[nomes[k]] = float(val * (100 if k in ("dedos", "lingua", "fecha", "m_sentido") else 1))
         return r
     r = resume(A)
     for o, D in por.items():
@@ -252,6 +413,8 @@ if __name__ == "__main__":   # prepara o cache da validação ANTES do treino (C
     cfg = _y.safe_load(open(_s.argv[1]))
     v2 = cfg["trainer"]["v2"]
     instala_split(v2["split"], "treino")
+    mk = v2.get("marcador")
+    instala_balanceamento(float(v2.get("balanceia", 1.0)), None, Marcadores(mk["alvos"], mk["episodios"]) if mk else None)
     fixas = {k: (v[0] if isinstance(v, list) else v) for k, v in (v2.get("frases") or {}).items()}
     lt = lotes_validacao(cfg["datasets"]["vla_data"]["data_config_path"], v2.get("val_lotes", 24), v2.get("val_lote", 4),
                          fixas, v2["val_cache"])

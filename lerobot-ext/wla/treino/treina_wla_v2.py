@@ -91,8 +91,10 @@ if __name__ == "__main__":
     if v2.get("split"):
         wla_v2.instala_split(v2["split"], "treino")
     frases = v2.get("frases", None)
+    mk = v2.get("marcador", None)   # v4: {alvos: alvos.jsonl do ER-1, episodios: episodios.jsonl}
     wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)),
-                                 OmegaConf.to_container(frases, resolve=True) if frases else None)
+                                 OmegaConf.to_container(frases, resolve=True) if frases else None,
+                                 wla_v2.Marcadores(mk["alvos"], mk["episodios"]) if mk else None)
     pesos = v2.get("pesos", None)
     wla_v2.instala_pesos_acao(OmegaConf.to_container(pesos, resolve=True) if pesos else {})
     cfg = C.T.apply_config_compat(cfg)
