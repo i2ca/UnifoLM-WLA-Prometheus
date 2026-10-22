@@ -122,8 +122,9 @@ class Balanceado(torch.utils.data.Dataset):
     trocada pela descritiva (frases = {frase do dataset: frase nova}). Fica no nível do módulo para viajar
     (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
 
-    def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True):
+    def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True, texto_vazio=0.0):
         self.ds, self.mapa, self.frases = ds, mapa, frases or {}
+        self.texto_vazio = texto_vazio   # CFG: fração das amostras com a frase VAZIA (o modelo aprende "sem frase")
         self.marcadores, self.papel, self.treino = marcadores, papel_cabeca, treino
         self.ep_quadro = None
         if marcadores is not None:   # episódio e quadro de cada índice local (para achar o ponto do ER-1)
@@ -167,21 +168,26 @@ class Balanceado(torch.utils.data.Dataset):
         if self.marcadores is not None:
             item = self.marca(item, j, sortear=self.treino)
             item.pop("cabeca_limpa", None)
+        if self.treino and self.texto_vazio > 0 and random.random() < self.texto_vazio:
+            item["task"] = ""
         return item
 
     def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
-        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum") \
+        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum", "texto_vazio") \
                 or nome.startswith("__"):
             raise AttributeError(nome)
         return getattr(self.ds, nome)
 
 
-def instala_balanceamento(alfa=1.0, frases=None, marcadores=None):
+def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.0):
     """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa (0 = sem repetir). frases: troca
     a frase da tarefa (ex.: "Pick up the white mug." -> "... from the side with the right hand upright.")."""
     from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
-    if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases and marcadores is None):
+    if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases and marcadores is None
+                                                        and not texto_vazio):
         return
+    if texto_vazio:
+        print(f"🔇 frase vazia em {texto_vazio:.0%} das amostras (para guiar pela frase na inferência, CFG)", flush=True)
     if marcadores is not None:
         print(f"🎯 marcador na imagem da cabeça: {len(marcadores.pts)} trechos rotulados pelo ER-1 "
               f"({marcadores.corrigidos} saltos isolados corrigidos)", flush=True)
@@ -200,7 +206,7 @@ def instala_balanceamento(alfa=1.0, frases=None, marcadores=None):
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa), frases, marcadores)
+        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio)
 
     DL.create_single_source_dataset = cria
     DL._balanceado = alfa

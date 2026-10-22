@@ -94,7 +94,8 @@ if __name__ == "__main__":
     mk = v2.get("marcador", None)   # v4: {alvos: alvos.jsonl do ER-1, episodios: episodios.jsonl}
     wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)),
                                  OmegaConf.to_container(frases, resolve=True) if frases else None,
-                                 wla_v2.Marcadores(mk["alvos"], mk["episodios"]) if mk else None)
+                                 wla_v2.Marcadores(mk["alvos"], mk["episodios"]) if mk else None,
+                                 float(v2.get("texto_vazio", 0.0)))
     pesos = v2.get("pesos", None)
     wla_v2.instala_pesos_acao(OmegaConf.to_container(pesos, resolve=True) if pesos else {})
     cfg = C.T.apply_config_compat(cfg)

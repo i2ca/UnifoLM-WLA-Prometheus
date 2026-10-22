@@ -88,6 +88,7 @@ trainer:
     pesos: {}                 # vazio = wla_v2.PESOS_PADRAO (mão dir 3, dedos dir 2, esq 1/0,5, pernas/base 0,05)
     # a frase do dataset -> frases DESCRITIVAS (sorteadas; a 1ª é a que o servidor manda no robô). A posição da pega
     # é a mesma para caneca e maçã; o que muda é o giro do punho (caneca ~-7°, maçã ~-80°) — agora está na frase.
+    texto_vazio: 0.15         # CFG: 15% das amostras sem frase -> na inferência, ação = sem + w x (com - sem), w > 1
     marcador:                 # o alvo do ER-1 desenhado na imagem da cabeça (rotula_alvos_er1.py)
       alvos: /data/mrwlker/wla_v2/alvos.jsonl
       episodios: /data/mrwlker/wla_v2/descricao/episodios.jsonl
