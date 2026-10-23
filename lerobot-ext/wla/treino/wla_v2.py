@@ -76,6 +76,40 @@ def desenha_marcador(img, x, y, raio=0.035, espessura=3.0):
     return out
 
 
+def cola_distratores(img, banco, alvo, pool, n, perto=0.5, dist_min=0.07):
+    """v5: cola n recortes (canecas/maçãs de outros quadros) na imagem da cabeça (CHW float), com borda suave, em
+    lugares reais de objetos (pool) ou perto do alvo, nunca a menos de dist_min do alvo (x, y em 0..1)."""
+    import torch.nn.functional as F
+    c, h, w = img.shape
+    out = img.clone()
+    for _ in range(n):
+        for _tent in range(20):
+            if random.random() < perto:
+                ang, r = random.uniform(0, 2 * np.pi), random.uniform(dist_min, 0.22)
+                x, y = alvo[0] + r * np.cos(ang), alvo[1] + r * np.sin(ang) * 0.8
+            else:
+                x, y = pool[random.randrange(len(pool))] + np.random.normal(0, 0.02, 2)
+            if 0.06 < x < 0.94 and 0.08 < y < 0.92 and np.hypot(x - alvo[0], y - alvo[1]) >= dist_min:
+                break
+        else:
+            continue
+        rc = banco[random.randrange(len(banco))]
+        L = max(16, int(rc.shape[-1] * random.uniform(0.8, 1.2) * w / 448))
+        rc = F.interpolate(rc[None], size=(L, L), mode="bilinear", align_corners=False)[0]
+        rc = (rc * random.uniform(0.9, 1.1)).clamp(0, 1)
+        yy, xx = torch.meshgrid(torch.arange(L, dtype=torch.float32), torch.arange(L, dtype=torch.float32), indexing="ij")
+        d = ((xx - L / 2 + 0.5) ** 2 + (yy - L / 2 + 0.5) ** 2).sqrt()
+        alfa = ((0.44 * L - d) / 4).clamp(0, 1)
+        x0, y0 = int(x * w - L / 2), int(y * h - L / 2)
+        xa, ya, xb, yb = max(0, x0), max(0, y0), min(w, x0 + L), min(h, y0 + L)
+        if xb <= xa or yb <= ya:
+            continue
+        sub = (slice(ya - y0, yb - y0), slice(xa - x0, xb - x0))
+        a_ = alfa[sub]
+        out[:3, ya:yb, xa:xb] = out[:3, ya:yb, xa:xb] * (1 - a_) + rc[:3][(slice(None),) + sub] * a_
+    return out
+
+
 class Marcadores:
     """Onde desenhar o marcador em cada quadro: os pontos que o ER-1 deu (alvos.jsonl, a cada 10 quadros) e a fase
     pelo episodios.jsonl — o objeto a PEGAR até a pega (+10 quadros), depois o lugar de COLOCAR (se a tarefa tem),
@@ -85,10 +119,18 @@ class Marcadores:
         self.pts, self.pega = {}, {}
         for d in map(json.loads, open(episodios_jsonl)):
             self.pega[(d["dataset"], d["episodio"])] = (None if d.get("comeca_segurando") else d.get("pega_quadro"))
+        self.descartados = 0
         for d in map(json.loads, open(alvos_jsonl)):
             if d.get("ponto"):
+                x, y = d["ponto"][0] / 1000, d["ponto"][1] / 1000
+                # o alvo está sempre na mesa: ponto no fundo (alto) ou na borda da imagem é erro do ER-1 (25% do
+                # "colocar no X" na cena antiga caía na borda, 23/10)
+                if y < 0.2 or x < 0.08 or x > 0.9:
+                    self.descartados += 1
+                    continue
                 self.pts.setdefault((d["dataset"], d["episodio"], d["alvo"]), []).append(
                     (d["quadro"], d["ponto"][0] / 1000, d["ponto"][1] / 1000))
+        self.pool = None   # lugares reais de objetos na mesa (para colar distratores do v5)
         # SALTOS ISOLADOS do ER-1 (um quadro aponta outra coisa e o seguinte volta): mediana móvel de 5 pontos
         # (~1,7 s). Não é a mediana do episódio: a cabeça gira com a cintura e o alvo anda na imagem de verdade.
         self.corrigidos = 0
@@ -101,6 +143,14 @@ class Marcadores:
                 if len(viz) >= 3 and np.linalg.norm(a[i] - med) > 0.08:
                     v[i] = (v[i][0], float(med[0]), float(med[1]))
                     self.corrigidos += 1
+        # lugares de objetos POR CENA (dataset): o distrator vai para a mesa daquela cena, não para o ar
+        self.pool = {}
+        for (ds, _e, alvo), v in self.pts.items():
+            if alvo == "pegar":
+                self.pool.setdefault(ds, []).extend([x, y] for _, x, y in v)
+        self.pool = {ds: np.array(v, dtype=np.float32) for ds, v in self.pool.items()}
+        todos = np.concatenate(list(self.pool.values())) if self.pool else np.zeros((1, 2), np.float32)
+        self.pool_geral = todos
 
     def ponto(self, ds, ep, f):
         pg = self.pega.get((ds, ep))
@@ -122,8 +172,10 @@ class Balanceado(torch.utils.data.Dataset):
     trocada pela descritiva (frases = {frase do dataset: frase nova}). Fica no nível do módulo para viajar
     (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
 
-    def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True, texto_vazio=0.0):
+    def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True, texto_vazio=0.0,
+                 distratores=None):
         self.ds, self.mapa, self.frases = ds, mapa, frases or {}
+        self.distratores = distratores   # v5: {"banco": (N,3,L,L), "prob": 0.7, "max": 3}
         self.texto_vazio = texto_vazio   # CFG: fração das amostras com a frase VAZIA (o modelo aprende "sem frase")
         self.marcadores, self.papel, self.treino = marcadores, papel_cabeca, treino
         self.ep_quadro = None
@@ -146,7 +198,8 @@ class Balanceado(torch.utils.data.Dataset):
 
     def marca(self, item, j, sortear):
         """Desenha o marcador do quadro j na imagem da cabeça. sortear: tremido de ~1,5% e 10% sem marcador."""
-        p = self.marcadores.ponto(*self.onde(j))
+        cena = self.onde(j)
+        p = self.marcadores.ponto(*cena)
         if p is None or (sortear and random.random() < 0.1):
             item["marcador"] = torch.tensor([-1.0, -1.0])
             return item
@@ -154,6 +207,11 @@ class Balanceado(torch.utils.data.Dataset):
         if sortear:
             x, y = x + random.gauss(0, 0.015), y + random.gauss(0, 0.015)
         x, y = float(np.clip(x, 0.02, 0.98)), float(np.clip(y, 0.02, 0.98))
+        dz = self.distratores
+        if sortear and dz is not None and random.random() < dz.get("prob", 0.7):
+            item["images"][self.papel] = cola_distratores(item["images"][self.papel], dz["banco"], (x, y),
+                                                          self.marcadores.pool.get(cena[0], self.marcadores.pool_geral),
+                                                          random.randint(1, dz.get("max", 3)))
         item["cabeca_limpa"] = item["images"][self.papel]
         item["images"][self.papel] = desenha_marcador(item["images"][self.papel], x, y)
         item["marcador"] = torch.tensor([x, y])
@@ -173,24 +231,28 @@ class Balanceado(torch.utils.data.Dataset):
         return item
 
     def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
-        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum", "texto_vazio") \
+        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum", "texto_vazio", "distratores") \
                 or nome.startswith("__"):
             raise AttributeError(nome)
         return getattr(self.ds, nome)
 
 
-def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.0):
+def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.0, distratores=None):
     """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa (0 = sem repetir). frases: troca
     a frase da tarefa (ex.: "Pick up the white mug." -> "... from the side with the right hand upright.")."""
     from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
     if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases and marcadores is None
                                                         and not texto_vazio):
         return
+    if distratores:
+        print(f"🧸 distratores: {len(distratores['banco'])} recortes, em {distratores.get('prob', 0.7):.0%} das amostras, "
+              f"até {distratores.get('max', 3)} por imagem", flush=True)
     if texto_vazio:
         print(f"🔇 frase vazia em {texto_vazio:.0%} das amostras (para guiar pela frase na inferência, CFG)", flush=True)
     if marcadores is not None:
         print(f"🎯 marcador na imagem da cabeça: {len(marcadores.pts)} trechos rotulados pelo ER-1 "
-              f"({marcadores.corrigidos} saltos isolados corrigidos)", flush=True)
+              f"({marcadores.corrigidos} saltos isolados corrigidos, {marcadores.descartados} fora da mesa descartados)",
+              flush=True)
     orig = DL.create_single_source_dataset
     if frases:
         print("🗣️  frases da tarefa trocadas:\n" + "\n".join(f"   {k!r} -> {v!r}" for k, v in frases.items()), flush=True)
@@ -206,7 +268,7 @@ def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio)
+        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio, distratores=distratores)
 
     DL.create_single_source_dataset = cria
     DL._balanceado = alfa

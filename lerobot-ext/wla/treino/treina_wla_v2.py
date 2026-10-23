@@ -27,6 +27,15 @@ import treina_cotreino_wla as C  # noqa: E402  (LoRA regex, partir_de, co-treino
 import wla_v2  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
 
+def distratores_da_config(dz):
+    """v5: {banco: recortes.pt, prob, max} -> o banco carregado (vai junto para os leitores)."""
+    if not dz:
+        return None
+    import torch
+    return {"banco": torch.load(dz["banco"], weights_only=False)["img"], "prob": float(dz.get("prob", 0.7)),
+            "max": int(dz.get("max", 3))}
+
+
 _init_ck = C.T.VLATrainer.init_checkpoint_and_lora
 
 
@@ -95,7 +104,8 @@ if __name__ == "__main__":
     wla_v2.instala_balanceamento(float(v2.get("balanceia", 1.0)),
                                  OmegaConf.to_container(frases, resolve=True) if frases else None,
                                  wla_v2.Marcadores(mk["alvos"], mk["episodios"]) if mk else None,
-                                 float(v2.get("texto_vazio", 0.0)))
+                                 float(v2.get("texto_vazio", 0.0)),
+                                 distratores_da_config(v2.get("distratores", None)))
     pesos = v2.get("pesos", None)
     wla_v2.instala_pesos_acao(OmegaConf.to_container(pesos, resolve=True) if pesos else {})
     cfg = C.T.apply_config_compat(cfg)

@@ -1,0 +1,135 @@
+# 23/10 TREINO V5 = V4 + DISTRATORES: canecas e maçãs coladas em lugares aleatórios da mesa na imagem da cabeça
+# (gera_recortes.py) — a arrumação da mesa deixa de dizer qual objeto pegar; só o MARCADOR aponta o verdadeiro.
+# (no v4 o modelo ignorou o marcador: val/marcador_sentido caiu de 27% para 4%.)
+# V4 = V3 + MARCADOR na imagem da cabeça (o alvo que o ER-1 apontou; o WLA segue a imagem) +
+# VLM com LoRA (a base da Unitree intacta: não esquece; sem o adaptador ele aponta como o original) + perguntas de
+# APONTAR no co-treino. O DiT treina inteiro.
+# V3 = V2 + FRASES DESCRITIVAS (a pega na frase: caneca pelo lado, maçã por cima) + perguntas das
+# ETAPAS no co-treino (gera_etapas_vqa.py). V2 (treina_wla_v2.py): do zero a partir do WLA-1.0-Base, TUDO descongelado (como o pré-treino da
+# Unitree: VLM com lr 10x menor; só a torre de visão congelada), validação de 5 episódios por tarefa, tarefas balanceadas, peso na ação.
+run_id: prometheus_v5
+run_root_dir: playground/Checkpoints
+seed: 42
+wandb_entity: prometheus-lcad
+wandb_project: unifolm_wla_finetune
+is_debug: false
+
+framework:
+  name: QwenMMDiT
+  qwenvl:
+    # Overridden at launch to <base_model_dir>/tokenizer — the released
+    # checkpoint's own VLM weights are already in `trainer.pretrained_checkpoint`
+    # below, so `base_vlm` only needs to supply the architecture config +
+    # tokenizer (see `_is_weightless_base_vlm` in unifolm_wla/model/modules/vlm/QWen3.py).
+    base_vlm: /path/to/UnifoLM-WLA-1.0-Base/tokenizer
+    attn_implementation: flash_attention_2
+    vl_hidden_dim: 2560
+  robot_state_projector:
+    enabled: true
+    input_dim: 120
+    projector_hidden_size: null
+    load_from: null
+  action_model:
+    action_model_type: DiT-L
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 54
+    state_dim: 0
+    action_horizon: 30
+    repeated_diffusion_steps: 1
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    embodiment_types: ["unitree"]
+    diffusion_model_cfg:
+      cross_attention_dim: 2560
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: "ada_norm"
+      num_layers: 16
+      num_attention_heads: 32
+      attention_head_dim: 48
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_py: multi_source_datasets
+    # Overridden at launch to the --data_config_path passed to
+    # run_finetune_mmdit_frozen_vlm.sh (default: unitree.yaml).
+    data_config_path: unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_v2.yaml
+    per_device_batch_size: 1
+    num_workers: 2
+
+trainer:
+  pretrained_checkpoint: /path/to/UnifoLM-WLA-1.0-Base/checkpoints/model.safetensors   # trocado no lançamento
+  is_resume: false
+  # VLM CONGELADO (base da Unitree intacta) + LoRA nas camadas de linguagem; o DiT treina inteiro.
+  freeze_modules: "qwen_vl_interface"
+  lora:
+    enabled: true
+    qwen_vl_interface:
+      enabled: true
+      r: 64
+      lora_alpha: 128
+      lora_dropout: 0.05
+      target_modules: ".*language_model.*\\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)"
+      bias: "none"
+    action_model:
+      enabled: false
+  v2:
+    split: /data/mrwlker/wla_v2/descricao/split.json   # descreve_datasets.py
+    balanceia: 1.0
+    val_intervalo: 500        # validação nos episódios separados a cada N passos (e no 0) -> val/* no wandb
+    val_lotes: 24             # 24 x 4 = 96 trechos de 1 s, fixos
+    val_lote: 4
+    val_cache: /data/mrwlker/wla_v2/val_v4.pt   # pronto ANTES do treino: python wla_v2.py <esta config>
+    pesos: {}                 # vazio = wla_v2.PESOS_PADRAO (mão dir 3, dedos dir 2, esq 1/0,5, pernas/base 0,05)
+    # a frase do dataset -> frases DESCRITIVAS (sorteadas; a 1ª é a que o servidor manda no robô). A posição da pega
+    # é a mesma para caneca e maçã; o que muda é o giro do punho (caneca ~-7°, maçã ~-80°) — agora está na frase.
+    texto_vazio: 0.15         # CFG: 15% das amostras sem frase -> na inferência, ação = sem + w x (com - sem), w > 1
+    distratores:              # v5: recortes colados (gera_recortes.py)
+      banco: /data/mrwlker/wla_v2/recortes.pt
+      prob: 0.7               # fração das amostras com distratores
+      max: 3                  # até 3 por imagem; metade perto do alvo
+    marcador:                 # o alvo do ER-1 desenhado na imagem da cabeça (rotula_alvos_er1.py)
+      alvos: /data/mrwlker/wla_v2/alvos.jsonl
+      episodios: /data/mrwlker/wla_v2/descricao/episodios.jsonl
+    frases:
+      "Pick up the white mug.":
+        - "Pick up the white mug from the side, with the right hand upright."
+        - "Grasp the white mug from the side with the right hand upright and lift it."
+      "Pick up the apple.":
+        - "Pick up the red apple from above, with the right palm facing down."
+        - "Grasp the red apple from above with the right palm facing down and lift it."
+      "Pick up the apple and place it on the black X.":
+        - "Pick up the red apple from above, with the right palm facing down, and place it on the black X."
+      "Place the white mug under the coffee strainer.":
+        - "Carry the white mug in the right hand and place it under the coffee strainer."
+  cotreino:                   # perguntas do ER-1 nas nossas imagens: o VLM continua sabendo o NOME das coisas
+    jsonl: /data/mrwlker/wla_v2/vqa_v4/treino.jsonl   # + APONTAR (alvo e outros objetos, gera_aponta_vqa.py)   # ER-1 sim/não + etapas + qual objeto + como pegar (gera_etapas_vqa.py)
+    peso: 0.1
+    lote: 4
+  max_train_steps: 30000
+  num_warmup_steps: 1000
+  save_interval: 2500
+  eval_interval: 2500
+  logging_frequency: 10
+  gradient_accumulation_steps: 1
+  gradient_clipping: 1.0
+  learning_rate:
+    base: 1.0e-04
+    qwen_vl_interface: 1.0e-04     # só o LoRA do VLM treina
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+  save_format: safetensors
