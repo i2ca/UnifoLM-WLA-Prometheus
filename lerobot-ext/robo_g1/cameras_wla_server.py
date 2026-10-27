@@ -155,8 +155,9 @@ def degrau(img):
 class Zed(Fonte):
     """ZED como webcam UVC: olho esquerdo | olho direito lado a lado, YUYV."""
 
-    def __init__(self, invertida=False, modo="vga", enquadramento="4x3"):
+    def __init__(self, invertida=False, modo="vga", enquadramento="4x3", imagem=None):
         super().__init__(["head_stereo_left", "head_stereo_right"])
+        self.imagem = {k: v for k, v in (imagem or {}).items() if v is not None}   # controles UVC (v4l2)
         self.enquadra = largo_4x3 if enquadramento == "largo" else para_4x3
         self.invertida = invertida
         self.w, self.h = MODOS_ZED[modo]
@@ -185,6 +186,11 @@ class Zed(Fonte):
                 continue
             self.estado = "ok"
             print(f"[zed] {dev} ok: {self.w}x{self.h} -> dois olhos 640x480 (recorte 4:3, cru)", flush=True)
+            if self.imagem:   # 27/10: contraste/saturação/nitidez/gama FIXOS (a cada abertura: vale após reconectar)
+                import subprocess
+                ctl = ",".join(f"{k}={v}" for k, v in self.imagem.items())
+                r = subprocess.run(["v4l2-ctl", "-d", dev, "-c", ctl], capture_output=True, text=True)
+                print(f"[zed] imagem: {ctl}" + (f" (erro: {r.stderr.strip()})" if r.returncode else ""), flush=True)
             falhas, seguidos, bom = 0, 0, None
             meio = self.w // 2
             while falhas < 30:
@@ -221,6 +227,13 @@ def main():
     ap.add_argument("--zed-enquadramento", choices=["4x3", "largo"], default="4x3",
                     help="4x3 = recorte central (~73°); largo = olho inteiro (~90°) com faixas pretas (mais perto "
                          "dos ~100° da câmera do dataset)")
+    # 27/10: controles da ZED (UVC). Padrão da câmera: contraste/saturação/brilho 4 (0-8), nitidez 0 (0-8),
+    # gama 100. Sem o argumento, não mexe. ATENÇÃO: os datasets até 27/10 foram gravados com 4/4/0/100.
+    ap.add_argument("--zed-contraste", type=int, default=None)
+    ap.add_argument("--zed-saturacao", type=int, default=None)
+    ap.add_argument("--zed-nitidez", type=int, default=None)
+    ap.add_argument("--zed-gama", type=int, default=None)
+    ap.add_argument("--zed-brilho", type=int, default=None)
     ap.add_argument("--zed-invertida", action="store_true",
                     help="ZED montada de cabeça para baixo: gira 180° e troca os olhos")
     ap.add_argument("--punho-esq", default=SERIAL_PUNHO_ESQ)
@@ -234,7 +247,9 @@ def main():
     if not a.sem_cabeca_realsense:
         fontes.append(RealSense("head_camera", SERIAL_CABECA))
     if not a.sem_zed:
-        fontes.append(Zed(a.zed_invertida, a.zed_modo, a.zed_enquadramento))
+        fontes.append(Zed(a.zed_invertida, a.zed_modo, a.zed_enquadramento,
+                          {"contrast": a.zed_contraste, "saturation": a.zed_saturacao, "sharpness": a.zed_nitidez,
+                           "gamma": a.zed_gama, "brightness": a.zed_brilho}))
     if not a.sem_punhos:
         fontes += [RealSense("wrist_left", a.punho_esq, a.punho_esq_invertido),
                    RealSense("wrist_right", a.punho_dir, a.punho_dir_invertido)]

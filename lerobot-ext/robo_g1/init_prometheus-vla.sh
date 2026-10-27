@@ -40,6 +40,13 @@ CAMERA_ESTEREO=true
 ZED_INVERTIDA=true      # ZED montada de cabeça para baixo (29/09): gira 180° e troca os olhos
 CABECA_REALSENSE=false  # a ZED tapou a D435i da cabeça: não abre a head_camera
 PUNHO_DIR_INVERTIDO=true  # câmera do punho direito de cabeça para baixo no suporte novo (30/09)
+# Imagem da ZED (27/10), FIXA a cada abertura da câmera. 4/4/0/100 = o padrão da câmera = como TODOS os datasets
+# até 27/10 foram gravados (os modelos atuais viram isso). Para os datasets NOVOS (café): 6/6/3/100 dá mais contraste
+# e cor (testado); grave e rode o modelo treinado neles com o MESMO valor.
+ZED_CONTRASTE=4         # 0-8
+ZED_SATURACAO=4         # 0-8
+ZED_NITIDEZ=0           # 0-8
+ZED_GAMA=100            # 1-500
 ZED_ENQUADRAMENTO=largo # largo = olho inteiro da ZED (~90°) com faixas pretas; 4x3 = recorte (~73°).
                         # A câmera do dataset do WLA tem ~100° (medido 29/09): 4x3 era 1,5x de zoom.
 
@@ -74,6 +81,7 @@ if [ "$CAMERA_ESTEREO" = "true" ]; then
     [ "$ZED_INVERTIDA" = "true" ] && CAM_EXTRA="$CAM_EXTRA --zed-invertida"
     [ "$PUNHO_DIR_INVERTIDO" = "true" ] && CAM_EXTRA="$CAM_EXTRA --punho-dir-invertido"
     CAM_EXTRA="$CAM_EXTRA --zed-enquadramento ${ZED_ENQUADRAMENTO:-4x3}"
+    CAM_EXTRA="$CAM_EXTRA --zed-contraste ${ZED_CONTRASTE:-4} --zed-saturacao ${ZED_SATURACAO:-4} --zed-nitidez ${ZED_NITIDEZ:-0} --zed-gama ${ZED_GAMA:-100}"
     [ "$CABECA_REALSENSE" != "true" ] && CAM_EXTRA="$CAM_EXTRA --sem-cabeca-realsense"
     python $PROJECT_DIR/cameras_wla_server.py $CAM_EXTRA &
     PID_CAM=$!
