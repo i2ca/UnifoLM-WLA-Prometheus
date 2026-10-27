@@ -6,11 +6,12 @@ set -e
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WLA="${1:-$HOME/DEV/unifolm-wla}"
 test -d "$WLA/unifolm_wla" || { echo "não achei $WLA/unifolm_wla — clone o unifolm-wla primeiro"; exit 1; }
-for f in lora_prometheus_dex3.yaml lora_prometheus_dex3_cotreino.yaml prometheus_v2.yaml prometheus_v3.yaml prometheus_v4.yaml prometheus_v5.yaml; do ln -sf "$AQUI/$f" "$WLA/unifolm_wla/config/training/$f"; done
+for f in lora_prometheus_dex3.yaml lora_prometheus_dex3_cotreino.yaml prometheus_v2.yaml prometheus_v3.yaml prometheus_v4.yaml prometheus_v5.yaml prometheus_cafe1.yaml; do ln -sf "$AQUI/$f" "$WLA/unifolm_wla/config/training/$f"; done
 for f in "$AQUI"/prometheus_dex3*.yaml; do f=$(basename "$f")
     ln -sf "$AQUI/$f" "$WLA/unifolm_wla/dataloader/multi_source_dataset/configs/$f"
 done
 ln -sf "$AQUI/dados_prometheus_v2.yaml" "$WLA/unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_v2.yaml"   # v2 (21/10)
+ln -sf "$AQUI/dados_prometheus_cafe.yaml" "$WLA/unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_cafe.yaml"   # café (27/10)
 for f in treina_lora_prometheus_dex3.sh treina_cotreino_wla.py treina_wla_v2.py wla_v2.py valida_wla.py descreve_datasets.py gera_etapas_vqa.py gera_aponta_vqa.py rotula_alvos_er1.py gera_recortes.py avalia_checkpoints_wla.py extrai_delta_lora.py testa_dados_wla.py; do
     ln -sf "$AQUI/$f" "$WLA/$f"
 done

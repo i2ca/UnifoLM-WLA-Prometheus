@@ -74,10 +74,16 @@ def init_checkpoint_and_lora(self):
         # (perda das perguntas 7,0 em vez de ~0,1). Então: LoRA só no DiT -> carrega -> LoRA no VLM.
         from omegaconf import OmegaConf
         lora = OmegaConf.to_container(self.config.trainer.lora, resolve=True)
-        so = lambda nome: {"enabled": True, nome: lora.get(nome)}   # noqa: E731
-        self.model = self.apply_lora_adapters(self.model, so("action_model"))
-        self.model = self.load_pretrained_backbones(self.model, partir, reload_modules=None)
-        self.model = self.apply_lora_adapters(self.model, so("qwen_vl_interface"))
+        if getattr(self.config.trainer, "partir_de_com_lora", False):
+            # 27/10 (afinar o v5): o checkpoint de partida JÁ TEM o LoRA de TUDO que a config pede (VLM e/ou DiT,
+            # salvo com os nomes base_layer/lora_*): injeta tudo ANTES de carregar e não injeta de novo
+            self.model = self.apply_lora_adapters(self.model, lora)
+            self.model = self.load_pretrained_backbones(self.model, partir, reload_modules=None)
+        else:
+            so = lambda nome: {"enabled": True, nome: lora.get(nome)}   # noqa: E731
+            self.model = self.apply_lora_adapters(self.model, so("action_model"))
+            self.model = self.load_pretrained_backbones(self.model, partir, reload_modules=None)
+            self.model = self.apply_lora_adapters(self.model, so("qwen_vl_interface"))
         self.completed_steps, self.resume_from_checkpoint = 0, partir
         print(f"▶ partindo de {partir} (LoRA do DiT afinado; LoRA do VLM novo)", flush=True)
     else:
