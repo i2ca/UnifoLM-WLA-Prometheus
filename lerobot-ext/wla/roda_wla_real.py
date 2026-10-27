@@ -326,6 +326,9 @@ def main():
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
                     help="yaw = gira o tronco como o modelo pede (padrão; o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura reta na posição da pose")
+    ap.add_argument("--ki-cintura", type=float, default=1.5,
+                    help="1/s: integrador no roll/pitch da cintura até o MEDIDO ficar reto (±0,12 rad). 27/10: com kp 300 "
+                         "o tronco cedia ~3° para a frente com os braços esticados (~17 Nm); 0 desliga")
     ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="kp/kd do yaw da cintura (descanso: 300/8; antes 150/5)")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
@@ -838,8 +841,17 @@ def main():
     desistiu = set(a.juntas_travadas)
     qm_ant = [None]
 
+    integ_c = {i: 0.0 for i in CINTURA[1:]}
+    base_c = {}
+
     def aplica_integrador():
         qm = q29()
+        # cintura reta: roll/pitch com integrador até o medido chegar ao alvo da pose (o peso dos braços a fazia ceder)
+        if a.ki_cintura > 0:
+            for i in CINTURA[1:]:
+                b = base_c.setdefault(i, float(q_ini[i]))
+                integ_c[i] = float(np.clip(integ_c[i] + a.ki_cintura * (b - qm[i]) * dt, -0.12, 0.12))
+                alvo[i] = b + integ_c[i]
         vel = np.zeros(29) if qm_ant[0] is None else np.abs(qm - qm_ant[0]) / dt
         qm_ant[0] = qm
         for i in BRACOS:

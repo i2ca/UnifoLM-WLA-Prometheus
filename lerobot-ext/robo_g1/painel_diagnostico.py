@@ -351,6 +351,25 @@ class PoseInicial:
                 self._abre_maos(fecha=fecha)
                 self.estado = f"indo para a pose {tipo}: {100 * u:.0f}%"
                 time.sleep(0.02)
+            # CINTURA RETA (27/10): kp 300 cede sob o peso dos braços (~17 Nm na pose de gravação = ~3° para a
+            # frente; no descanso ~1,7 Nm, ~0,3°). Integrador no roll/pitch até o MEDIDO chegar ao alvo (±0,12 rad),
+            # e só então trava a ponte (ela segue segurando o último comando, já corrigido).
+            corr = {i: 0.0 for i in CINTURA[1:]}
+            t0 = time.time()
+            while time.time() - t0 < 3.0:
+                pan, idade_p = D.pega("panico")
+                low, idade_l = D.pega("low")
+                if pan is None or idade_p > 1.0 or pan.get("panico") or idade_l > 0.3:
+                    self.estado = "INTERROMPIDA (pânico, ponte ou estado sumiu) — a ponte segura o braço"
+                    return
+                for i in CINTURA[1:]:
+                    e = alvo[i] - float(low.motor_state[i].q)
+                    corr[i] = float(np.clip(corr[i] + 1.5 * e * 0.02, -0.12, 0.12))
+                    q[i] = alvo[i] + corr[i]
+                self._envia(q, mm)
+                self._abre_maos(fecha=fecha)
+                self.estado = f"endireitando a cintura (roll/pitch +{corr[CINTURA[1]]:+.3f}/{corr[CINTURA[2]]:+.3f} rad)"
+                time.sleep(0.02)
             self.pedido.send(json.dumps({"panico": True}).encode())
             low, _ = D.pega("low")
             erro = max(abs(float(low.motor_state[i].q) - alvo[i]) for i in alvo)
