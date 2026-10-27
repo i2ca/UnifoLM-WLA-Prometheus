@@ -1,0 +1,77 @@
+{
+ "imagem": "mesa_cafe.jpg",
+ "camera": "head_stereo_left 640x480 (ZED, enquadramento largo)",
+ "data": "2026-10-27",
+ "objetos": {
+  "chaleira": {
+   "en": "the electric kettle",
+   "desc": "stainless steel electric kettle with a black handle and lid",
+   "caixa": [
+    385,
+    128,
+    505,
+    254
+   ]
+  },
+  "coador": {
+   "en": "the coffee dripper",
+   "desc": "light brown plastic coffee dripper (filter cone)",
+   "caixa": [
+    328,
+    163,
+    386,
+    214
+   ]
+  },
+  "caneca": {
+   "en": "the white mug",
+   "desc": "white ceramic mug with a handle on the left",
+   "caixa": [
+    316,
+    210,
+    376,
+    278
+   ]
+  },
+  "pote_cafe": {
+   "en": "the coffee jar",
+   "desc": "open dark brown ceramic coffee jar",
+   "caixa": [
+    238,
+    226,
+    308,
+    294
+   ]
+  },
+  "tampa_pote": {
+   "en": "the coffee jar lid",
+   "desc": "round dark brown lid of the coffee jar, with ridges",
+   "caixa": [
+    301,
+    278,
+    367,
+    335
+   ]
+  },
+  "concha": {
+   "en": "the coffee scoop",
+   "desc": "small black plastic coffee measuring scoop",
+   "caixa": [
+    202,
+    303,
+    260,
+    332
+   ]
+  },
+  "x_preto": {
+   "en": "the black X",
+   "desc": "black X mark taped on the table",
+   "caixa": [
+    260,
+    336,
+    307,
+    380
+   ]
+  }
+ }
+}
