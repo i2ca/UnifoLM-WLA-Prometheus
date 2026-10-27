@@ -8,6 +8,14 @@ com as tarefas que o WLA sabe fazer — uma de cada vez, checando "terminou?" an
             avança com dois "sim" seguidos. Não terminou em --tempo-max s: volta à pose inicial e tenta de novo uma vez;
             falhou de novo: para e avisa.
   parar     manda a cabine do robô parar (POST /parar) e cancela o objetivo
+  falar     o robô fala o texto (voz do G1, pelo painel :8095/fala) e o texto aparece no chat
+
+TRAVAS (para nada ir ao robô por acidente):
+  1. o objetivo só vira PLANO (nada vai ao robô); executar exige CONFIRMAR o plano, e o plano expira em 60 s;
+  2. confirmar só funciona com o robô LIBERADO (chave na página), que volta a TRAVADO sozinho no fim de cada
+     objetivo, no PARAR e após 10 min sem uso;
+  3. antes de cada etapa confere a cabine do robô: no ar, sem parada pedida e sem outra tarefa rodando;
+  4. só as frases da lista HABILIDADES vão ao robô, no máximo 4 etapas por objetivo; Enter no campo só CONVERSA.
 
 Precisa no ar: o ER-1 (sobe_er1_pergunta.sh, :8098) e a cabine do robô com o WLA (sobe_cabine_wla.sh, :8090).
 Rode a cabine do robô SEM TERMINOU=1 (quem checa agora é este orquestrador).
@@ -44,6 +52,8 @@ class Orquestrador:
         self.msgs, self.trava = [], threading.Lock()
         self.rodando, self.cancela = False, threading.Event()
         self.plano, self.passo = [], -1
+        self.pendente, self.pendente_t = None, 0.0     # plano esperando CONFIRMAR (expira em 60 s)
+        self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
 
     # ── registro (a página lê por /estado) ──
     def diz(self, quem, texto, **extra):
@@ -72,6 +82,38 @@ class Orquestrador:
         req = urllib.request.Request(f"{self.a.cabine}{caminho}", data=dados, method="POST",
                                      headers={"Content-Type": "application/json"})
         return json.loads(urllib.request.urlopen(req, timeout=10).read())
+
+    # ── voz do robô ──
+    def fala(self, texto, origem="ER-1"):
+        """O robô fala (voz interna do G1, pelo painel do robô) e o texto entra no chat."""
+        try:
+            u = f"{self.a.painel}/fala?texto={urllib.parse.quote(texto)}"
+            urllib.request.urlopen(urllib.request.Request(u, data=b"", method="POST"), timeout=5).read()
+            self.diz("robô 🔊", texto, origem=origem)
+        except Exception as e:  # noqa: BLE001
+            self.diz("sistema", f"o robô não conseguiu falar ({e}): {texto}")
+
+    # ── travas ──
+    def libera(self, sim):
+        self.liberado, self.liberado_t = bool(sim), time.time()
+        self.diz("sistema", "🔓 robô LIBERADO para executar planos confirmados" if sim else "🔒 robô TRAVADO")
+
+    def esta_liberado(self):
+        if self.liberado and time.time() - self.liberado_t > 600:
+            self.libera(False)
+        return self.liberado
+
+    def cabine_pronta(self):
+        """No ar, sem parada pedida e sem outra tarefa rodando."""
+        try:
+            e = json.loads(urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=5).read())
+        except Exception as ex:  # noqa: BLE001
+            return f"a cabine do robô não responde ({ex})"
+        if e.get("parada_pedida"):
+            return "a cabine do robô está com PARADA pedida"
+        if (e.get("tarefa") or "").strip():
+            return f"o robô já está fazendo outra tarefa: \"{e['tarefa']}\""
+        return None
 
     # ── conversa ──
     def conversa(self, texto):
@@ -109,8 +151,34 @@ class Orquestrador:
         if not plano:
             self.diz("sistema", "o ER-1 não montou um plano com as tarefas conhecidas")
             return
+        if len(plano) > 4:
+            self.diz("sistema", f"plano com {len(plano)} etapas: o limite é 4 — não vou executar")
+            return
+        self.pendente, self.pendente_t = plano, time.time()
+        self.diz("sistema", "⚠️ nada foi mandado ao robô. Confira o plano: com o robô LIBERADO, aperte CONFIRMAR "
+                            "em até 60 s para executar.", pendente=True)
+
+    def confirma(self):
+        plano = self.pendente
+        if not plano or time.time() - self.pendente_t > 60:
+            self.pendente = None
+            self.diz("sistema", "não há plano para confirmar (ou passou de 60 s) — peça o objetivo de novo")
+            return
+        if not self.esta_liberado():
+            self.diz("sistema", "🔒 o robô está TRAVADO: ligue a chave 'robô liberado' antes de confirmar")
+            return
+        if self.rodando:
+            self.diz("sistema", "já estou executando — aperte PARAR primeiro")
+            return
+        motivo = self.cabine_pronta()
+        if motivo:
+            self.diz("sistema", f"não vou executar: {motivo}")
+            return
+        self.pendente = None
         self.plano, self.passo, self.rodando = plano, -1, True
         self.cancela.clear()
+        self.diz("você", "✔ CONFIRMAR plano")
+        self.fala("I will " + ", then ".join(p[0].lower() + p[1:].rstrip(".") for p in plano) + ".")
         threading.Thread(target=self._executa, daemon=True).start()
 
     def _espera(self, s):
@@ -123,6 +191,11 @@ class Orquestrador:
                 for tentativa in (1, 2):
                     if self.cancela.is_set():
                         return
+                    if i > 0 or tentativa > 1:   # na 1ª a checagem já foi feita no CONFIRMAR
+                        motivo = self.cabine_pronta() if tentativa == 1 else None
+                        if motivo and "outra tarefa" not in motivo:
+                            self.diz("orquestrador", f"🛑 parei antes da etapa {i + 1}: {motivo}")
+                            return
                     self.diz("orquestrador", f"▶ etapa {i + 1}/{len(self.plano)}: {PT[frase]} "
                                              f"(tentativa {tentativa}) — mandando ao WLA")
                     self.cabine("/tarefa", {"texto": frase})
@@ -141,6 +214,7 @@ class Orquestrador:
                             break
                     if sims >= 2:
                         self.diz("orquestrador", f"✅ etapa {i + 1} concluída: {PT[frase]}")
+                        self.fala(f"Step {i + 1} done: {frase[0].lower() + frase[1:]}")
                         break
                     if tentativa == 1:
                         self.diz("orquestrador", f"⏱️ {self.a.tempo_max:.0f} s sem concluir — voltando à pose inicial "
@@ -152,16 +226,23 @@ class Orquestrador:
                 else:
                     self.diz("orquestrador", f"❌ não consegui \"{PT[frase]}\" em duas tentativas — parei")
                     self.cabine("/tarefa", {"texto": ""})
+                    self.fala("I could not finish the task. I stopped.")
                     return
             self.diz("orquestrador", "🏁 objetivo concluído!")
             self.cabine("/tarefa", {"texto": ""})
+            self.fala("Goal completed.")
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"erro na execução: {e}")
         finally:
             self.rodando, self.passo = False, -1
+            if self.liberado:
+                self.libera(False)   # trava sozinho no fim de cada objetivo
 
     def parar(self):
         self.cancela.set()
+        self.pendente = None
+        if self.liberado:
+            self.libera(False)
         try:
             self.cabine("/tarefa", {"texto": ""})
             self.cabine("/parar")
@@ -185,14 +266,21 @@ img{width:100%;border-radius:8px;background:#000}h1{font-size:16px;margin:0 0 8p
 .t{color:var(--fraco);font-size:11px;margin-right:6px}
 form{display:flex;gap:6px;margin-top:8px}input{flex:1;padding:9px;border-radius:8px;border:1px solid #333;background:#0d0f13;color:var(--texto)}
 button{padding:9px 12px;border:0;border-radius:8px;background:var(--acento);color:#fff;cursor:pointer}
-button.obj{background:var(--ok)}button.parar{background:var(--erro)}#hab{color:var(--fraco);font-size:13px;margin-top:8px}
+button.obj{background:var(--ok)}button.parar{background:var(--erro);font-weight:700}
+button.conf{background:#d98e04}button:disabled{opacity:.35;cursor:not-allowed}
+.barra{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}.chave{display:flex;gap:6px;align-items:center}
+.chave input{width:18px;height:18px}.robô{background:#2d2550}#hab{color:var(--fraco);font-size:13px;margin-top:8px}
 </style></head><body><main>
 <section class="cartao"><h1>Câmera da cabeça</h1><img id="cam" alt="câmera da cabeça">
 <div id="hab"></div></section>
 <section class="cartao"><h1>Conversa com o ER-1 <span id="estado" class="t"></span></h1><div id="chat"></div>
 <form id="f"><input id="txt" placeholder="pergunte algo, ou escreva um objetivo (ex.: pegue a caneca e coloque no coador)" autocomplete="off">
-<button type="submit" title="só conversa">Perguntar</button><button type="button" class="obj" id="obj" title="o ER-1 planeja e executa">Executar</button>
-<button type="button" class="parar" id="parar">PARAR</button></form></section></main>
+<button type="submit" title="só conversa (Enter)">Perguntar</button>
+<button type="button" class="obj" id="obj" title="o ER-1 monta o PLANO (nada vai ao robô)">Planejar</button>
+<button type="button" id="falar" title="o robô fala este texto">🔊 Falar</button></form>
+<div class="barra"><label class="chave"><input type="checkbox" id="lib"> robô liberado</label>
+<button type="button" class="conf" id="conf" disabled>✔ CONFIRMAR plano</button>
+<button type="button" class="parar" id="parar">⏹ PARAR</button></div></section></main>
 <script>
 const CAB = "__CABINE__";
 document.getElementById("cam").src = CAB + "/camera/head_stereo_left.mjpg";
@@ -201,14 +289,19 @@ async function post(c, b){ await fetch(c, {method:"POST", headers:{"Content-Type
 document.getElementById("f").onsubmit = e => { e.preventDefault(); const t = txt.value.trim(); if(t){ post("/conversa",{texto:t}); txt.value=""; } };
 document.getElementById("obj").onclick = () => { const t = txt.value.trim(); if(t){ post("/objetivo",{texto:t}); txt.value=""; } };
 document.getElementById("parar").onclick = () => post("/parar");
+document.getElementById("falar").onclick = () => { const t = txt.value.trim(); if(t){ post("/falar",{texto:t}); txt.value=""; } };
+document.getElementById("lib").onchange = e => post("/libera", {sim: e.target.checked});
+document.getElementById("conf").onclick = () => { if(confirm("Executar o plano no robô?")) post("/confirma"); };
 async function atualiza(){
   try{
     const e = await (await fetch("/estado")).json();
     document.getElementById("estado").textContent = e.rodando ? `executando etapa ${e.passo+1}/${e.plano.length}` : "parado";
+    document.getElementById("lib").checked = e.liberado;
+    document.getElementById("conf").disabled = !(e.pendente && e.liberado && !e.rodando);
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
     const chat = document.getElementById("chat");
     for(const m of e.msgs.slice(n)){
-      const d = document.createElement("div"); d.className = "m " + (m.quem === "você" ? "voce" : m.quem) + (m.fino ? " fino" : "");
+      const d = document.createElement("div"); d.className = "m " + (m.quem === "você" ? "voce" : m.quem.startsWith("robô") ? "robô" : m.quem) + (m.fino ? " fino" : "");
       d.innerHTML = `<span class="t">${m.t} ${m.quem}${m.ms ? " · " + m.ms + " ms" : ""}</span>`;
       d.appendChild(document.createTextNode(m.texto)); chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
     }
@@ -225,6 +318,7 @@ def main():
     ap.add_argument("--porta", type=int, default=8092)
     ap.add_argument("--er1", default="http://127.0.0.1:8098")
     ap.add_argument("--cabine", default="http://127.0.0.1:8090", help="a cabine do robô (sobe_cabine_wla.sh)")
+    ap.add_argument("--painel", default="http://192.168.123.164:8095", help="painel do robô (voz: POST /fala)")
     ap.add_argument("--cabine-navegador", default=None,
                     help="endereço da cabine do robô como o NAVEGADOR o vê (para a câmera); padrão: o mesmo host da página, :8090")
     ap.add_argument("--checa-s", type=float, default=5.0, help="segundos entre os 'terminou?'")
@@ -250,8 +344,10 @@ def main():
             if self.path.startswith("/estado"):
                 with o.trava:
                     msgs = list(o.msgs)
+                pend = o.pendente is not None and time.time() - o.pendente_t <= 60
                 return self._json({"msgs": msgs, "rodando": o.rodando, "passo": o.passo,
-                                   "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES]})
+                                   "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES],
+                                   "pendente": pend, "liberado": o.esta_liberado()})
             host = (self.headers.get("Host") or "localhost").split(":")[0]
             cab = a.cabine_navegador or f"http://{host}:8090"
             b = PAGINA.replace("__CABINE__", cab).encode()
@@ -274,10 +370,17 @@ def main():
                 threading.Thread(target=o.objetivo, args=(texto,), daemon=True).start()
             elif self.path == "/parar":
                 o.parar()
+            elif self.path == "/confirma":
+                threading.Thread(target=o.confirma, daemon=True).start()
+            elif self.path == "/libera":
+                o.libera(bool(corpo.get("sim")))
+            elif self.path == "/falar" and texto:
+                threading.Thread(target=o.fala, args=(texto, "você"), daemon=True).start()
             return self._json({"ok": True})
 
-    o.diz("sistema", "cabine do ER-1 pronta. 'Perguntar' só conversa; 'Executar' faz o ER-1 planejar e mandar as tarefas "
-                     "ao robô, uma de cada vez.")
+    o.diz("sistema", "cabine do ER-1 pronta. Perguntar = conversa · Planejar = o ER-1 monta o plano (nada vai ao "
+                     "robô) · CONFIRMAR executa (precisa da chave 'robô liberado') · Falar = o robô fala o texto · "
+                     "PARAR a qualquer momento.")
     print(f"🧠 cabine do ER-1 em http://0.0.0.0:{a.porta}  (ER-1 {a.er1}, cabine do robô {a.cabine})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", a.porta), H).serve_forever()
 
