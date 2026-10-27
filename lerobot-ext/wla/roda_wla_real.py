@@ -321,11 +321,11 @@ def main():
                     help="botões de tarefa na cabine, 'rótulo=frase'")
     ap.add_argument("--mistura", type=float, default=6,
                     help="passos (a --hz) de transição suave entre um trecho e o próximo; 0 desliga")
-    # 27/10: como na POSE DE DESCANSO (painel): a cintura inteira (yaw também) a 300/8 e PARADA na posição da pose
-    # (gravacao/descanso = 0,0,0: coluna reta). Antes o yaw ia a 150/5 e seguia o modelo.
-    ap.add_argument("--cintura", choices=["yaw", "parada"], default="parada",
-                    help="parada = segura a cintura reta na posição da pose (padrão, como no descanso); "
-                         "yaw = gira o tronco como o modelo pede (o dataset gravou o tronco seguindo a cabeça)")
+    # 27/10: ganhos da POSE DE DESCANSO (painel) na cintura inteira: roll/pitch 300/8 retos (0) e o yaw também a
+    # 300/8 (antes 150/5), CONTINUANDO a girar como o modelo pede (o dataset gira o tronco de -29° a +30°).
+    ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
+                    help="yaw = gira o tronco como o modelo pede (padrão; o dataset gravou o tronco seguindo a cabeça); "
+                         "parada = segura a cintura reta na posição da pose")
     ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="kp/kd do yaw da cintura (descanso: 300/8; antes 150/5)")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
