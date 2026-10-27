@@ -12,7 +12,8 @@ com as tarefas que o WLA sabe fazer — uma de cada vez, checando "terminou?" an
 
 TRAVAS (para nada ir ao robô por acidente):
   1. o objetivo só vira PLANO (nada vai ao robô); executar exige CONFIRMAR o plano, e o plano expira em 60 s;
-  2. confirmar só funciona com o robô LIBERADO (chave na página), que volta a TRAVADO sozinho no fim de cada
+  2. a 2ª tentativa de uma etapa também pede CONFIRMAR (60 s; sem confirmar, para);
+  3. confirmar só funciona com o robô LIBERADO (chave na página), que volta a TRAVADO sozinho no fim de cada
      objetivo, no PARAR e após 10 min sem uso;
   3. antes de cada etapa confere a cabine do robô: no ar, sem parada pedida e sem outra tarefa rodando;
   4. só as frases da lista HABILIDADES vão ao robô, no máximo 4 etapas por objetivo; Enter no campo só CONVERSA.
@@ -69,6 +70,8 @@ class Orquestrador:
         self.pendente, self.pendente_t = None, 0.0     # plano esperando CONFIRMAR (expira em 60 s)
         self.historico = []                            # (pergunta, resposta) — memória da conversa
         self.seq_enviado = None                        # número da última tarefa que mandamos à cabine do robô
+        self.retry = None                              # (frase, t) esperando CONFIRMAR para tentar de novo
+        self.retry_ok = threading.Event()
         self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
 
     # ── registro (a página lê por /estado) ──
@@ -256,6 +259,12 @@ class Orquestrador:
         self.fala(f"Meu plano é {etapas}. Posso começar? Confirme na tela.", "plano")
 
     def confirma(self):
+        if self.retry is not None:   # confirmação da 2ª tentativa
+            if not self.esta_liberado():
+                self.diz("sistema", "🔒 o robô está TRAVADO: ligue a chave 'robô liberado' para tentar de novo")
+                return
+            self.retry_ok.set()
+            return
         plano = self.pendente
         if not plano or time.time() - self.pendente_t > 60:
             self.pendente = None
@@ -341,12 +350,26 @@ class Orquestrador:
                         self.fala(f"Etapa {i + 1} concluída: {PT[frase]}.")
                         break
                     if tentativa == 1:
-                        self.diz("orquestrador", f"⏱️ {self.a.tempo_max:.0f} s sem concluir — voltando à pose inicial "
-                                                 "e tentando de novo")
+                        # 27/10: a 2ª tentativa só com CONFIRMAR de novo (antes reenviava sozinha)
                         self.cabine("/tarefa", {"texto": ""})
                         self.cabine("/inicial")
-                        if self._espera(self.a.volta_s):
+                        self.retry, self.retry_ok = (frase, time.time()), threading.Event()
+                        self.diz("orquestrador", f"⏱️ {self.a.tempo_max:.0f} s sem concluir \"{PT[frase]}\" — voltei à "
+                                                 "pose inicial. Tentar de novo? Aperte CONFIRMAR em até 60 s "
+                                                 "(sem confirmar, eu paro).", pendente=True)
+                        self.fala(f"Não consegui {PT[frase]}. Quer que eu tente de novo? Confirme na tela.", "plano")
+                        t1 = time.time()
+                        while time.time() - t1 < 60 and not self.retry_ok.is_set():
+                            if self._espera(0.5):
+                                self.retry = None
+                                return
+                        ok = self.retry_ok.is_set()
+                        self.retry = None
+                        if not ok:
+                            self.diz("orquestrador", "⏹ sem confirmação para tentar de novo — parei")
+                            self.fala("Sem confirmação. Parei.", "plano")
                             return
+                        self.diz("você", "✔ CONFIRMAR nova tentativa")
                 else:
                     self.diz("orquestrador", f"❌ não consegui \"{PT[frase]}\" em duas tentativas — parei")
                     self.cabine("/tarefa", {"texto": ""})
@@ -434,13 +457,13 @@ document.getElementById("parar").onclick = () => post("/parar");
 document.getElementById("reset").onclick = () => { post("/reset"); document.getElementById("chat").innerHTML = ""; n = 0; };
 document.getElementById("falar").onclick = () => { const t = txt.value.trim(); if(t){ post("/falar",{texto:t}); txt.value=""; } };
 document.getElementById("lib").onchange = e => post("/libera", {sim: e.target.checked});
-document.getElementById("conf").onclick = () => { if(confirm("Executar o plano no robô?")) post("/confirma"); };
+document.getElementById("conf").onclick = () => { if(confirm("Executar no robô?")) post("/confirma"); };
 async function atualiza(){
   try{
     const e = await (await fetch("/estado")).json();
     document.getElementById("estado").textContent = e.rodando ? `executando etapa ${e.passo+1}/${e.plano.length}` : "parado";
     document.getElementById("lib").checked = e.liberado;
-    document.getElementById("conf").disabled = !(e.pendente && e.liberado && !e.rodando);
+    document.getElementById("conf").disabled = !(e.pendente && e.liberado && (!e.rodando || e.retry));
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
     const chat = document.getElementById("chat");
     if (e.msgs.length < n) { document.getElementById("chat").innerHTML = ""; n = 0; }
@@ -492,10 +515,10 @@ def main():
             if self.path.startswith("/estado"):
                 with o.trava:
                     msgs = list(o.msgs)
-                pend = o.pendente is not None and time.time() - o.pendente_t <= 60
+                pend = (o.pendente is not None and time.time() - o.pendente_t <= 60) or o.retry is not None
                 return self._json({"msgs": msgs, "rodando": o.rodando, "passo": o.passo,
                                    "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES],
-                                   "pendente": pend, "liberado": o.esta_liberado()})
+                                   "pendente": pend, "liberado": o.esta_liberado(), "retry": o.retry is not None})
             host = (self.headers.get("Host") or "localhost").split(":")[0]
             cab = a.cabine_navegador or f"http://{host}:8090"
             b = PAGINA.replace("__CABINE__", cab).encode()
