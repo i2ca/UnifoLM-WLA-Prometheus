@@ -68,6 +68,7 @@ class Orquestrador:
         self.plano, self.passo = [], -1
         self.pendente, self.pendente_t = None, 0.0     # plano esperando CONFIRMAR (expira em 60 s)
         self.historico = []                            # (pergunta, resposta) — memória da conversa
+        self.seq_enviado = None                        # número da última tarefa que mandamos à cabine do robô
         self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
 
     # ── registro (a página lê por /estado) ──
@@ -96,7 +97,18 @@ class Orquestrador:
         dados = json.dumps(corpo or {}).encode()
         req = urllib.request.Request(f"{self.a.cabine}{caminho}", data=dados, method="POST",
                                      headers={"Content-Type": "application/json"})
-        return json.loads(urllib.request.urlopen(req, timeout=10).read())
+        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        if caminho == "/tarefa" and "tarefa_seq" in r:
+            self.seq_enviado = r["tarefa_seq"]
+        return r
+
+    def cabine_reiniciou(self):
+        """True se a cabine do robô foi reiniciada depois do nosso último envio (o número da tarefa voltou para trás)."""
+        try:
+            e = json.loads(urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=5).read())
+        except Exception:  # noqa: BLE001
+            return True   # não responde: trata como reiniciada (não manda nada)
+        return self.seq_enviado is not None and int(e.get("tarefa_seq", 0)) < self.seq_enviado
 
     # ── voz do robô ──
     def _pcm(self, texto):
@@ -284,6 +296,13 @@ class Orquestrador:
                 for tentativa in (1, 2):
                     if self.cancela.is_set():
                         return
+                    if self.cabine_reiniciou():
+                        self.diz("orquestrador", "🛑 a cabine do robô foi REINICIADA (ou não responde): objetivo cancelado, "
+                                                 "não mando mais nada")
+                        return
+                    if not self.liberado:
+                        self.diz("orquestrador", "🛑 o robô foi TRAVADO: objetivo cancelado")
+                        return
                     if i > 0 or tentativa > 1:   # na 1ª a checagem já foi feita no CONFIRMAR
                         motivo = self.cabine_pronta() if tentativa == 1 else None
                         if motivo and "outra tarefa" not in motivo:
@@ -304,6 +323,14 @@ class Orquestrador:
                         except Exception as ex:  # noqa: BLE001
                             self.diz("sistema", f"cabine do robô não respondeu: {ex}")
                             continue
+                        if self.seq_enviado is not None and int(e.get("tarefa_seq", 0)) < self.seq_enviado:
+                            self.diz("orquestrador", "🛑 a cabine do robô foi REINICIADA: objetivo cancelado, não mando "
+                                                     "mais nada")
+                            return
+                        if (e.get("tarefa") or "").strip() != frase or e.get("parada_pedida"):
+                            self.diz("orquestrador", "🛑 a tarefa do robô foi mudada ou parada fora daqui: objetivo "
+                                                     "cancelado, não mando mais nada")
+                            return
                         c = e.get("concluida") or {}
                         if c.get("frase") == frase and c.get("t", 0) > t0:
                             sims = 2
@@ -336,11 +363,21 @@ class Orquestrador:
                 self.libera(False)   # trava sozinho no fim de cada objetivo
 
     def reset(self):
-        """Novo contexto: esquece a conversa e o plano pendente, limpa o chat (não mexe no robô)."""
+        """Novo contexto: CANCELA o objetivo em andamento (27/10: ele continuava e reenviou a tarefa sozinho),
+        esquece a conversa e o plano pendente, limpa o chat e trava o robô."""
+        estava = self.rodando
+        self.cancela.set()
+        if estava:
+            try:
+                self.cabine("/tarefa", {"texto": ""})
+            except Exception:  # noqa: BLE001
+                pass
+        if self.liberado:
+            self.liberado = False
         with self.trava:
             self.msgs = []
         self.historico, self.pendente = [], None
-        self.diz("sistema", "🧹 contexto apagado: o ER-1 esqueceu a conversa anterior")
+        self.diz("sistema", "🧹 contexto apagado" + (" e objetivo CANCELADO" if estava else "") + " — robô travado")
 
     def parar(self):
         self.cancela.set()
