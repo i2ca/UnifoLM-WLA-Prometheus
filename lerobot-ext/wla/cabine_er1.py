@@ -96,11 +96,24 @@ class Orquestrador:
         return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
     # ── voz do robô ──
+    def _pcm(self, texto):
+        """Voz Piper em português (pt_BR-faber, gerada aqui na PGX) -> PCM 16 kHz mono. A voz interna do G1 só fala
+        inglês/chinês; o painel do robô toca o PCM pelo mesmo caminho do alarme de pânico."""
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([f"{self.a.piper}/.venv/bin/piper", "-m", f"{self.a.piper}/{self.a.voz}", "-f", f"{d}/a.wav"],
+                           input=texto.encode(), check=True, capture_output=True)
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", f"{d}/a.wav", "-ar", "16000", "-ac", "1",
+                            "-f", "s16le", f"{d}/a.pcm"], check=True)
+            return open(f"{d}/a.pcm", "rb").read()
+
     def fala(self, texto, origem="ER-1"):
-        """O robô fala (voz interna do G1, pelo painel do robô) e o texto entra no chat."""
+        """O robô fala em português (pelo painel do robô) e o texto entra no chat."""
         try:
+            pcm = self._pcm(texto)
             u = f"{self.a.painel}/fala?texto={urllib.parse.quote(texto)}"
-            urllib.request.urlopen(urllib.request.Request(u, data=b"", method="POST"), timeout=5).read()
+            urllib.request.urlopen(urllib.request.Request(u, data=pcm, method="POST"), timeout=10).read()
             self.diz("robô 🔊", texto, origem=origem)
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"o robô não conseguiu falar ({e}): {texto}")
@@ -154,6 +167,8 @@ class Orquestrador:
                  "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             self.diz("ER-1", r, ms=ms)
+            if self.a.fala_respostas:
+                self.fala(r, "ER-1")
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"ER-1 indisponível: {e}")
 
@@ -209,7 +224,7 @@ class Orquestrador:
         self.plano, self.passo, self.rodando = plano, -1, True
         self.cancela.clear()
         self.diz("você", "✔ CONFIRMAR plano")
-        self.fala("I will " + ", then ".join(p[0].lower() + p[1:].rstrip(".") for p in plano) + ".")
+        self.fala("Vou " + ", depois ".join(PT[p] for p in plano) + ".")
         threading.Thread(target=self._executa, daemon=True).start()
 
     def _espera(self, s):
@@ -245,7 +260,7 @@ class Orquestrador:
                             break
                     if sims >= 2:
                         self.diz("orquestrador", f"✅ etapa {i + 1} concluída: {PT[frase]}")
-                        self.fala(f"Step {i + 1} done: {frase[0].lower() + frase[1:]}")
+                        self.fala(f"Etapa {i + 1} concluída: {PT[frase]}.")
                         break
                     if tentativa == 1:
                         self.diz("orquestrador", f"⏱️ {self.a.tempo_max:.0f} s sem concluir — voltando à pose inicial "
@@ -257,11 +272,11 @@ class Orquestrador:
                 else:
                     self.diz("orquestrador", f"❌ não consegui \"{PT[frase]}\" em duas tentativas — parei")
                     self.cabine("/tarefa", {"texto": ""})
-                    self.fala("I could not finish the task. I stopped.")
+                    self.fala("Não consegui terminar a tarefa. Parei.")
                     return
             self.diz("orquestrador", "🏁 objetivo concluído!")
             self.cabine("/tarefa", {"texto": ""})
-            self.fala("Goal completed.")
+            self.fala("Objetivo concluído.")
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"erro na execução: {e}")
         finally:
@@ -350,6 +365,9 @@ def main():
     ap.add_argument("--er1", default="http://127.0.0.1:8098")
     ap.add_argument("--cabine", default="http://127.0.0.1:8090", help="a cabine do robô (sobe_cabine_wla.sh)")
     ap.add_argument("--painel", default="http://192.168.123.164:8095", help="painel do robô (voz: POST /fala)")
+    ap.add_argument("--piper", default=str(__import__("pathlib").Path.home() / "wla_testes/tts"))
+    ap.add_argument("--voz", default="pt_BR-faber-medium.onnx", help="voz Piper (pasta --piper)")
+    ap.add_argument("--fala-respostas", type=int, default=1, help="1 = o robô fala as respostas do ER-1 na conversa")
     ap.add_argument("--cabine-navegador", default=None,
                     help="endereço da cabine do robô como o NAVEGADOR o vê (para a câmera); padrão: o mesmo host da página, :8090")
     ap.add_argument("--checa-s", type=float, default=5.0, help="segundos entre os 'terminou?'")
