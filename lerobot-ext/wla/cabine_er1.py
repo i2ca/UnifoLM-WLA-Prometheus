@@ -38,10 +38,18 @@ HABILIDADES = [
     "Pick up the apple.",
     "Pick up the apple and place it on the black X.",
 ]
-# a mesa do café (objetos_cafe/objetos.json): ajuda o ER-1 a usar os nomes certos
-OBJETOS_MESA = ("an electric stainless-steel kettle with a black handle, a light brown plastic coffee dripper (coffee strainer), "
-                "a white ceramic mug, an open dark brown ceramic coffee jar, the round dark brown jar lid with ridges, "
-                "a small black coffee scoop, a black X taped on the table, a red apple")
+# a mesa do café (objetos_cafe/objetos.json): o ER-1 CONFIRMA um a um (sim/não) antes de responder — com a lista
+# inteira no texto ele citava tudo, até a maçã que não estava na mesa (27/10)
+OBJETOS_MESA = {
+    "an electric stainless-steel kettle with a black handle": "Is there an electric kettle on the table?",
+    "a light brown plastic coffee dripper (coffee strainer)": "Is there a light brown coffee dripper (coffee strainer) on the table?",
+    "a white ceramic mug": "Is there a white mug on the table?",
+    "a dark brown ceramic coffee jar": "Is there a dark brown coffee jar on the table?",
+    "the round dark brown lid of the coffee jar, lying on the table": "Is there a round dark brown lid lying on the table, separate from the jar?",
+    "a small black coffee scoop": "Is there a small black coffee scoop on the table?",
+    "a black X taped on the table": "Is there a black X mark on the table?",
+    "a red apple": "Is there a red apple on the table?",
+}
 PT = {
     "Pick up the white mug.": "pegar a caneca branca",
     "Place the white mug under the coffee strainer.": "colocar a caneca embaixo do coador",
@@ -119,14 +127,29 @@ class Orquestrador:
             return f"o robô já está fazendo outra tarefa: \"{e['tarefa']}\""
         return None
 
+    def objetos_presentes(self):
+        """Pergunta sim/não (ER-1 original) para cada objeto conhecido; devolve os que ele vê."""
+        vistos = []
+        for nome, q in OBJETOS_MESA.items():
+            try:
+                r, _ = self.er1(q + " Answer only yes or no.", max_tok=3, lora=0, timeout=20)
+                if r.lower().startswith("yes"):
+                    vistos.append(nome)
+            except Exception:  # noqa: BLE001
+                pass
+        self.diz("ER-1", "confirmei na mesa: " + (", ".join(n.split(" (")[0] for n in vistos) or "nada da lista"), fino=True)
+        return vistos
+
     # ── conversa ──
     def conversa(self, texto):
         self.diz("você", texto)
         try:
             # 27/10: com a pergunta ANTES das instruções o ER-1 só repetia a pergunta; e sem a lista ele trocava nomes
             # ("copo de vidro" = coador, "xícara" = pote). Agora: papel -> objetos que podem estar na mesa -> pergunta.
+            presentes = self.objetos_presentes()
             q = ("You are the brain of a humanoid robot (Unitree G1). The image is from your head camera, looking at a "
-                 f"table in front of you. Objects that may be on the table: {OBJETOS_MESA}.\n"
+                 "table in front of you. Objects CONFIRMED on the table right now: "
+                 f"{'; '.join(presentes) if presentes else 'none of the known objects'}.\n"
                  f'The user asks (in Portuguese): "{texto}"\n'
                  "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
