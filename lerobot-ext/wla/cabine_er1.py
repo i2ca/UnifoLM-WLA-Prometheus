@@ -38,6 +38,10 @@ HABILIDADES = [
     "Pick up the apple.",
     "Pick up the apple and place it on the black X.",
 ]
+# a mesa do café (objetos_cafe/objetos.json): ajuda o ER-1 a usar os nomes certos
+OBJETOS_MESA = ("an electric stainless-steel kettle with a black handle, a light brown plastic coffee dripper (coffee strainer), "
+                "a white ceramic mug, an open dark brown ceramic coffee jar, the round dark brown jar lid with ridges, "
+                "a small black coffee scoop, a black X taped on the table, a red apple")
 PT = {
     "Pick up the white mug.": "pegar a caneca branca",
     "Place the white mug under the coffee strainer.": "colocar a caneca embaixo do coador",
@@ -119,8 +123,12 @@ class Orquestrador:
     def conversa(self, texto):
         self.diz("você", texto)
         try:
-            q = (f"{texto}\n\n(You are the reasoning brain of a humanoid robot (Unitree G1) looking at a table through "
-                 "its head camera. Answer in Brazilian Portuguese, briefly.)")
+            # 27/10: com a pergunta ANTES das instruções o ER-1 só repetia a pergunta; e sem a lista ele trocava nomes
+            # ("copo de vidro" = coador, "xícara" = pote). Agora: papel -> objetos que podem estar na mesa -> pergunta.
+            q = ("You are the brain of a humanoid robot (Unitree G1). The image is from your head camera, looking at a "
+                 f"table in front of you. Objects that may be on the table: {OBJETOS_MESA}.\n"
+                 f'The user asks (in Portuguese): "{texto}"\n'
+                 "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             self.diz("ER-1", r, ms=ms)
         except Exception as e:  # noqa: BLE001
