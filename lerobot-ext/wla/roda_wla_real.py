@@ -256,9 +256,12 @@ def main():
     ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="roll e pitch da cintura (alvo 0 = coluna reta, como na gravação). 02/10: com 150/5 o pitch "
                          "ficava 0,08-0,16 rad à frente e o roll/pitch esquentou até a cintura ceder; a gravação usou 300/8")
-    ap.add_argument("--temp-tronco", type=float, default=0.0,
-                    help="°C: acima disto no roll/pitch da cintura SEGURA a posição (cabine 'parar'); 0 = não segura, "
-                         "só avisa a partir de 60 °C (padrão, 02/10)")
+    ap.add_argument("--temp-tronco", type=float, default=75.0,
+                    help="°C: acima disto no roll/pitch da cintura PARA a tarefa e volta à posição inicial (mão aberta) "
+                         "para esfriar; 0 = só avisa. 27/10: ligado (o roll chegou a 86 °C e desabilitou)")
+    ap.add_argument("--kp-roll", type=float, nargs=2, default=[100.0, 4.0], metavar=("KP", "KD"),
+                    help="kp/kd do ROLL da cintura (o pitch segue --kp-tronco). 27/10: com 300/8 o roll esquentou a 86 °C "
+                         "— ele quase não segura peso, e qualquer diferença do 'zero' virava força contínua")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
@@ -499,7 +502,8 @@ def main():
     def envia():
         if not a.ensaio:
             cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5, *a.kp_tronco,
-                                               tau=tau_gravidade(), kp_yaw=a.kp_yaw[0], kd_yaw=a.kp_yaw[1])).encode("utf-8"))
+                                               tau=tau_gravidade(), kp_yaw=a.kp_yaw[0], kd_yaw=a.kp_yaw[1],
+                                               kp_roll=a.kp_roll[0], kd_roll=a.kp_roll[1])).encode("utf-8"))
 
     fech_mao = {"left": None, "right": None}
 
@@ -766,7 +770,8 @@ def main():
                     print(f"\n🏁 ER-1: terminou? {'SIM' if sim else 'não'} ({antes['sims']}/2)", flush=True)
                     if antes["sims"] == 2 and antes.get("avisou") != frase:
                         antes["avisou"] = frase
-                        fala.diz(f"Task completed: {frase[0].lower() + frase[1:].rstrip('.')}.", "ER-1")
+                        if fala is not None:
+                            fala.diz(f"Task completed: {frase[0].lower() + frase[1:].rstrip('.')}.", "ER-1")
                         cabine.concluida = {"frase": frase, "t": time.time()}   # a cabine do ER-1 lê daqui
                         print(f"\n✅ ER-1: TAREFA CONCLUÍDA — {frase}", flush=True)
                 except Exception as e:  # noqa: BLE001
@@ -775,9 +780,10 @@ def main():
                 continue
             texto += "."
             print(f"\n🗣️  narração: {texto}", flush=True)
-            fala.diz(texto, "sensores+ER-1")
+            if fala is not None:
+                fala.diz(texto, "sensores+ER-1")
 
-    if fala is not None and a.narra:
+    if a.narra and (fala is not None or a.so_terminou):   # sem voz (--voz nenhuma) o "terminou?" continua
         cabine.terminou_ativo = True
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
 
@@ -1170,9 +1176,11 @@ def main():
                 t_temp[0] = tc
                 temps = [_temp(est.low["motor_state"][i]) for i in CINTURA[1:]]
                 if a.temp_tronco > 0 and max(temps) >= a.temp_tronco and cabine.tarefa()[0]:
-                    print(f"\n🌡️  cintura roll/pitch a {temps} °C (limite {a.temp_tronco:.0f}): SEGURANDO a posição. "
-                          "Deixe esfriar; mande a tarefa de novo na cabine.", flush=True)
+                    print(f"\n🌡️  cintura roll/pitch a {temps} °C (limite {a.temp_tronco:.0f}): PAREI a tarefa e volto à "
+                          "posição inicial. Deixe esfriar; mande a tarefa de novo na cabine.", flush=True)
                     cabine.define_tarefa("")
+                    cabine.pede_inicial()
+                    cabine.quente = {"temps": temps, "t": time.time()}
                 elif max(temps) >= (a.temp_tronco - 8 if a.temp_tronco > 0 else 60.0) and tc - t_temp[1] > 30:
                     t_temp[1] = tc
                     print(f"\n⚠️  cintura roll/pitch esquentando: {temps} °C", flush=True)

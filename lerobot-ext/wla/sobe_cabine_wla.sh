@@ -33,6 +33,7 @@ fi
 [ -n "${SERVO:-}" ] && QUER_ER1=1 || QUER_ER1=${NARRA:-0}
 # TERMINOU=1 (27/10): o ER-1 só checa se a tarefa terminou e o robô fala "Task completed: <tarefa>." (sem narrar)
 [ "${TERMINOU:-0}" = "1" ] && QUER_ER1=1
+# FALA=0 (27/10): o executor não fala (quem fala, em português, é a cabine do ER-1); o "terminou?" continua
 if [ "$QUER_ER1" = "1" ] && ! (echo > /dev/tcp/127.0.0.1/8098) 2>/dev/null; then
     (cd "$UNIFOLM_WLA" && setsid nohup "$PY" -u "$WLA_DIR/er1_pergunta.py" --rgb > ~/er1_pergunta.log 2>&1 < /dev/null &)
     echo -n "⏳ carregando o ER-1 (narração)"
@@ -50,5 +51,6 @@ SEM_ER1=()
 [ -n "${SERVO:-}" ] && SEM_ER1+=(--servo "$SERVO")
 [ -n "${SERVO:-}" ] && [ "${NARRA:-0}" != "1" ] && [ "${TERMINOU:-0}" != "1" ] && SEM_ER1+=(--narra-s 1000000)   # ER-1 só para o servo
 [ "${TERMINOU:-0}" = "1" ] && [ "${NARRA:-0}" != "1" ] && SEM_ER1+=(--so-terminou --narra-s "${TERMINOU_S:-5}")
+[ "${FALA:-1}" = "0" ] && SEM_ER1+=(--voz nenhuma)
 exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
     --braco-esquerdo ativo --juntas-travadas 20 "${SEM_ER1[@]}" "$@"

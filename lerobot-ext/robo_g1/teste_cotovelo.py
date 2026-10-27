@@ -84,13 +84,15 @@ def modo_da_ponte(ctx, robo, timeout=3.0):
 
 
 def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_punho, kp_tronco=150.0, kd_tronco=5.0,
-              tau=None, kp_yaw=150.0, kd_yaw=5.0):
+              tau=None, kp_yaw=150.0, kd_yaw=5.0, kp_roll=None, kd_roll=None):
     """Comando de 35 motores igual ao da classe UnitreeG1Dex3 em modo loco.
     kp_tronco/kd_tronco = roll e pitch da cintura. 02/10: com 150/5 o pitch ficava 0,08-0,16 rad à frente
     (o WBC puxa contra) e o roll/pitch esquentou até ceder; na gravação (300/8) ficou em 0,03 rad."""
     mc = [{"mode": 0, "q": 0.0, "dq": 0.0, "kp": 0.0, "kd": 0.0, "tau": 0.0} for _ in range(N_MOTORES)]
     for i in CINTURA:   # cintura segura onde está; yaw 150/5 (o modelo gira o tronco)
         kp, kd = (kp_yaw, kd_yaw) if i == CINTURA[0] else (kp_tronco, kd_tronco)
+        if i == CINTURA[1] and kp_roll is not None:   # 27/10: roll mais macio (300/8 esquentou a 86 °C)
+            kp, kd = kp_roll, kd_roll
         mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
     for i in BRACOS:
         kp, kd = (kp_punho, kd_punho) if i in PUNHOS else (kp_braco, kd_braco)

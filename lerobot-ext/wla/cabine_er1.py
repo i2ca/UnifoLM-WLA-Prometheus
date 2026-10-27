@@ -109,13 +109,15 @@ class Orquestrador:
                             "-f", "s16le", f"{d}/a.pcm"], check=True)
             return open(f"{d}/a.pcm", "rb").read()
 
-    def fala(self, texto, origem="ER-1"):
-        """O robô fala em português (pelo painel do robô) e o texto entra no chat."""
+    def fala(self, texto, origem="ER-1", registra=True):
+        """O robô fala em português (pelo painel do robô). registra=False: o texto já está no chat (resposta do ER-1
+        marcada com 🔊) — não repete a mesma frase duas vezes."""
         try:
             pcm = self._pcm(texto)
             u = f"{self.a.painel}/fala?texto={urllib.parse.quote(texto)}"
             urllib.request.urlopen(urllib.request.Request(u, data=pcm, method="POST"), timeout=10).read()
-            self.diz("robô 🔊", texto, origem=origem)
+            if registra:
+                self.diz("robô 🔊", texto, origem=origem)
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"o robô não conseguiu falar ({e}): {texto}")
 
@@ -151,7 +153,7 @@ class Orquestrador:
                     vistos.append(nome)
             except Exception:  # noqa: BLE001
                 pass
-        self.diz("ER-1", "confirmei na mesa: " + (", ".join(n.split(" (")[0] for n in vistos) or "nada da lista"), fino=True)
+        print("[ER-1] confirmei na mesa: " + (", ".join(n.split(" (")[0] for n in vistos) or "nada da lista"), flush=True)
         return vistos
 
     # ── conversa ──
@@ -170,7 +172,7 @@ class Orquestrador:
 
     def conversa(self, texto):
         if self.COMANDO.match(texto):   # ordem ("coloca o copo no coador"): vira PLANO (nada vai ao robô sem CONFIRMAR)
-            self.diz("sistema", "isso parece uma ORDEM: vou montar o plano (nada vai ao robô sem CONFIRMAR)", fino=True)
+            print("[sistema] ordem no chat: vira plano (nada vai ao robô sem CONFIRMAR)", flush=True)
             return self.objetivo(texto)
         self.diz("você", texto)
         try:
@@ -184,9 +186,10 @@ class Orquestrador:
                  "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             r = self.traduz(r)
-            self.diz("ER-1", r, ms=ms)
-            if self.a.fala_respostas:
-                self.fala(r, "ER-1")
+            fala = bool(self.a.fala_respostas)
+            self.diz("ER-1" + (" 🔊" if fala else ""), r, ms=ms)
+            if fala:
+                self.fala(r, "ER-1", registra=False)
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"ER-1 indisponível: {e}")
 
@@ -221,6 +224,9 @@ class Orquestrador:
         self.pendente, self.pendente_t = plano, time.time()
         self.diz("sistema", "⚠️ nada foi mandado ao robô. Confira o plano: com o robô LIBERADO, aperte CONFIRMAR "
                             "em até 60 s para executar.", pendente=True)
+        # o robô fala o plano ANTES de fazer qualquer coisa e pede a confirmação
+        etapas = ", depois ".join(PT[p] for p in plano)
+        self.fala(f"Meu plano é {etapas}. Posso começar? Confirme na tela.", "plano")
 
     def confirma(self):
         plano = self.pendente
@@ -250,7 +256,7 @@ class Orquestrador:
         self.plano, self.passo, self.rodando = plano, -1, True
         self.cancela.clear()
         self.diz("você", "✔ CONFIRMAR plano")
-        self.fala("Vou " + ", depois ".join(PT[p] for p in plano) + ".")
+        self.fala("Confirmado. Começando.", "plano")
         threading.Thread(target=self._executa, daemon=True).start()
 
     def _espera(self, s):
@@ -338,7 +344,7 @@ main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;p
 img{width:100%;border-radius:8px;background:#000}h1{font-size:16px;margin:0 0 8px}
 #chat{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px;min-height:300px}
 .m{padding:7px 9px;border-radius:8px;max-width:95%;white-space:pre-wrap}.voce{align-self:flex-end;background:#25406b}
-.ER-1{background:#24262e}.orquestrador{background:#1f3326}.sistema{background:#3a2424}.fino{opacity:.6;font-size:13px}
+.ER-1{background:#24262e}.ER-1.🔊{background:#24262e}.orquestrador{background:#1f3326}.sistema{background:#3a2424}.fino{opacity:.6;font-size:13px}
 .t{color:var(--fraco);font-size:11px;margin-right:6px}
 form{display:flex;gap:6px;margin-top:8px}input{flex:1;padding:9px;border-radius:8px;border:1px solid #333;background:#0d0f13;color:var(--texto)}
 button{padding:9px 12px;border:0;border-radius:8px;background:var(--acento);color:#fff;cursor:pointer}
