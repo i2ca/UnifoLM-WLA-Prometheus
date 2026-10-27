@@ -239,6 +239,10 @@ def main():
     ap.add_argument("--juntas-travadas", type=int, nargs="*", default=[],
                     help="juntas com defeito, fixas na posição medida: a IK resolve sem elas e o integrador não "
                          "insiste (ex.: 20 = pitch do punho esquerdo, que estava travado em 29/09)")
+    ap.add_argument("--juntas-soltas", type=int, nargs="*", default=[20],
+                    help="juntas com defeito mandadas SEM FORÇA (kp/kd 0). 27/10: 20 = pitch do punho esquerdo (peça "
+                         "danificada): segurando ele dava pulos e esquentava. Use também em --juntas-travadas para a IK "
+                         "não contar com ela")
     ap.add_argument("--voz", choices=["g1", "piper", "nenhuma"], default="g1",
                     help="o robô fala o que vai fazer: g1 = voz interna do G1; piper = voz dos alertas; nenhuma")
     ap.add_argument("--braco-esquerdo", choices=["parado", "ativo"], default="ativo",
@@ -504,7 +508,8 @@ def main():
         if not a.ensaio:
             cmd_sock.send(json.dumps(monta_cmd(alvo, est, 80.0, 3.0, 40.0, 1.5, *a.kp_tronco,
                                                tau=tau_gravidade(), kp_yaw=a.kp_yaw[0], kd_yaw=a.kp_yaw[1],
-                                               kp_roll=a.kp_roll[0], kd_roll=a.kp_roll[1])).encode("utf-8"))
+                                               kp_roll=a.kp_roll[0], kd_roll=a.kp_roll[1],
+                                               soltas=set(a.juntas_soltas))).encode("utf-8"))
 
     fech_mao = {"left": None, "right": None}
 

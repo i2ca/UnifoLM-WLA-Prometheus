@@ -302,6 +302,8 @@ class PoseInicial:
         mc[CINTURA[1]]["kp"], mc[CINTURA[1]]["kd"] = 100.0, 4.0
         for i in BRACOS:
             kp, kd = (40.0, 1.5) if i in PUNHOS else (80.0, 3.0)   # a ponte corta para os tetos dela
+            if i in JUNTAS_SOLTAS:
+                kp, kd = 0.0, 0.0   # 27/10: pitch do punho esquerdo com defeito: solto (pulava e esquentava)
             mc[i] = {"mode": 1, "q": q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
         mc[29]["q"] = 1.0   # arm_sdk: o WBC obedece nos braços
         self.cmd.send(json.dumps({"topic": "rt/arm_sdk", "data": {"mode_pr": 1, "mode_machine": mm,
@@ -386,6 +388,7 @@ class PoseInicial:
             self.rodando = False
 
 
+JUNTAS_SOLTAS = {20}         # punho esquerdo (pitch) com defeito: sem força
 ENDIREITA_CINTURA_S = 0.0   # s de integrador na cintura antes de travar a ponte (0 = não)
 
 
