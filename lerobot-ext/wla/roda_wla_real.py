@@ -197,6 +197,9 @@ def main():
                     help="ER-1 (er1_pergunta.py): a cada --narra-s o robô diz o que está fazendo, olhando a câmera da "
                          "cabeça com a tarefa atual ('' desliga)")
     ap.add_argument("--narra-s", type=float, default=8.0, help="segundos entre as narrações do ER-1")
+    ap.add_argument("--so-terminou", action="store_true",
+                    help="27/10: o ER-1 só pergunta 'terminou?' (sem narrar a cada --narra-s) e o robô fala a tarefa "
+                         "concluída — menos tempo de GPU tirado do WLA")
     ap.add_argument("--narra-objetos", nargs="+",
                     default=["white mug", "red apple", "black X", "coffee strainer", "kettle", "black pot"],
                     help="objetos da cena: a narração só diz um destes (ou nada)")
@@ -724,7 +727,7 @@ def main():
                 antes.update(frase=frase, p=p, sims=0, avisou=None)
             texto = f"{movimento(p - antes['p']).capitalize()}, {dedos('right')}"
             antes["p"] = p
-            if time.time() - falhou > 60:
+            if time.time() - falhou > 60 and not a.so_terminou:
                 try:
                     # 21/10: pergunta FECHADA, pela câmera da CABEÇA. A do punho via a caneca pela metade, de perto,
                     # e o ER-1 chamava de "bowl", "bathtub", "chair"; com a lista dos objetos da cena ele acerta.
@@ -745,7 +748,7 @@ def main():
                     print(f"\n⚠️  ER-1 indisponível ({a.narra}): {e} — narro só pelos sensores por 60 s", flush=True)
             # TERMINOU? (08/10) — pergunta do LoRA do ER-1, no MESMO formato do treino (94,9% nos episódios de teste);
             # duas vezes "sim" seguidas = o robô avisa e a cabine registra
-            if time.time() - falhou > 60:
+            if time.time() - falhou > 60 and antes.get("avisou") != frase:   # já avisou desta tarefa: não pergunta mais
                 try:
                     qf = f'The robot\'s task is: "{frase}" Has the robot completed this task? Answer only yes or no.'
                     u = f"{a.narra}/pergunta?" + urllib.parse.urlencode({"q": qf, "livre": 1, "max": 4, "lora": 1,
@@ -757,11 +760,11 @@ def main():
                     print(f"\n🏁 ER-1: terminou? {'SIM' if sim else 'não'} ({antes['sims']}/2)", flush=True)
                     if antes["sims"] == 2 and antes.get("avisou") != frase:
                         antes["avisou"] = frase
-                        fala.diz("Task completed.", "ER-1")
+                        fala.diz(f"Task completed: {frase[0].lower() + frase[1:].rstrip('.')}.", "ER-1")
                         print(f"\n✅ ER-1: TAREFA CONCLUÍDA — {frase}", flush=True)
                 except Exception as e:  # noqa: BLE001
                     print(f"\n⚠️  ER-1 (terminou?) indisponível: {e}", flush=True)
-            if (cabine.tarefa()[0] or a.tarefa) != frase:
+            if (cabine.tarefa()[0] or a.tarefa) != frase or a.so_terminou:
                 continue
             texto += "."
             print(f"\n🗣️  narração: {texto}", flush=True)
