@@ -336,6 +336,12 @@ def main():
     ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="kp/kd do yaw da cintura (descanso: 300/8; antes 150/5)")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
+    ap.add_argument("--peso-rot-esq", type=float, default=0.03,
+                    help="27/10: peso da ORIENTAÇÃO na IK do braço ESQUERDO (o direito usa --peso-rot). Com o pitch do "
+                         "punho esquerdo travado (--juntas-travadas 20), girar a mão contorcia ombro/cotovelo e a mão "
+                         "subia e descia ~50 cm sem o modelo pedir")
+    ap.add_argument("--erro-ik-max-cm", type=float, default=4.0,
+                    help="se a IK de um braço errar mais que isto, o passo é descartado e o braço fica onde estava")
     ap.add_argument("--kp-mao", type=float, default=0.7, help="kp dos dedos Dex3 (modelo fig6d)")
     ap.add_argument("--kd-mao", type=float, default=0.1, help="kd dos dedos Dex3 (modelo fig6d)")
     ap.add_argument("--folga-mao", type=float, default=0.35,
@@ -1129,8 +1135,13 @@ def main():
                             stats["cortes"][l] += 1
                         q_ant = q_ik.copy()
                         q_ik, ep, _ = fk.ik(q_ik, l, R_alvo, p_alvo, iters=15, lo=lo_caixa, hi=hi_caixa,
-                                            peso_rot=a.peso_rot, q_repouso=q_part, peso_repouso=a.peso_repouso)
+                                            peso_rot=a.peso_rot_esq if l == "left" else a.peso_rot,
+                                            q_repouso=q_part, peso_repouso=a.peso_repouso)
                         stats["erros"][l] = max(stats["erros"][l], ep)
+                        if ep * 100 > a.erro_ik_max_cm:   # a IK não chega: não deixa o braço sair andando
+                            q_ik[BRACO[l]] = q_ant[BRACO[l]]
+                            stats["cortes"][l] += 1
+                            continue
                         stats["fins"][l] = (v[:3], p_alvo, v[:3] - pm)
                         # limite por passo: ENCOLHE o movimento inteiro (mesma direção), não junta a junta
                         idx = BRACO[l]
