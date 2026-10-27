@@ -907,7 +907,7 @@ def main():
     stats = {}
     volta = None   # botão 'posição inicial' da cabine
     fech_ant, segura_braco = {}, {}   # espera os dedos fecharem antes de subir
-    t_temp = [0.0, 0.0]
+    t_temp = [0.0, 0.0, 0.0]
     segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
         avisou_assenta = [False]
@@ -1159,6 +1159,18 @@ def main():
                 elif max(temps) >= (a.temp_tronco - 8 if a.temp_tronco > 0 else 60.0) and tc - t_temp[1] > 30:
                     t_temp[1] = tc
                     print(f"\n⚠️  cintura roll/pitch esquentando: {temps} °C", flush=True)
+                # 27/10: a cada 20 s, temperatura da cintura e dos ombros/cotovelos + a correção do integrador da
+                # cintura (se ela encostar em ±0,12 rad, o tronco está brigando com alguma coisa: é o que esquenta)
+                if tc - t_temp[2] > 20.0:
+                    t_temp[2] = tc
+                    ms = est.low["motor_state"]
+                    tb = {"ombro_esq": _temp(ms[15]), "cotovelo_esq": _temp(ms[18]), "ombro_dir": _temp(ms[22]),
+                          "cotovelo_dir": _temp(ms[25])}
+                    print(f"\n🌡️  cintura yaw/roll/pitch {[_temp(ms[i]) for i in CINTURA]} °C | braços {tb} °C | "
+                          f"correção roll/pitch {[round(integ_c[i], 3) for i in CINTURA[1:]]} rad", flush=True)
+                    if any(abs(v) >= 0.115 for v in integ_c.values()):
+                        print("   ⚠️  correção da cintura no limite: o tronco não chega a 0 — diminua --ki-cintura "
+                              "ou use --ki-cintura 0", flush=True)
             envia()   # sempre: sem trecho novo, segura o último alvo (o arm_sdk nunca fica mudo)
             time.sleep(max(0.0, dt - (time.time() - tc)))
         if atual is not None:
