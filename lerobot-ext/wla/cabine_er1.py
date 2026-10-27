@@ -335,6 +335,13 @@ class Orquestrador:
             if self.liberado:
                 self.libera(False)   # trava sozinho no fim de cada objetivo
 
+    def reset(self):
+        """Novo contexto: esquece a conversa e o plano pendente, limpa o chat (não mexe no robô)."""
+        with self.trava:
+            self.msgs = []
+        self.historico, self.pendente = [], None
+        self.diz("sistema", "🧹 contexto apagado: o ER-1 esqueceu a conversa anterior")
+
     def parar(self):
         self.cancela.set()
         self.pendente = None
@@ -377,7 +384,8 @@ button.conf{background:#d98e04}button:disabled{opacity:.35;cursor:not-allowed}
 <button type="button" id="falar" title="o robô fala este texto">🔊 Falar</button></form>
 <div class="barra"><label class="chave"><input type="checkbox" id="lib"> robô liberado</label>
 <button type="button" class="conf" id="conf" disabled>✔ CONFIRMAR plano</button>
-<button type="button" class="parar" id="parar">⏹ PARAR</button></div></section></main>
+<button type="button" class="parar" id="parar">⏹ PARAR</button>
+<button type="button" id="reset" title="apaga a memória da conversa e limpa o chat">🧹 Novo contexto</button></div></section></main>
 <script>
 const CAB = "__CABINE__";
 document.getElementById("cam").src = CAB + "/camera/head_stereo_left.mjpg";
@@ -386,6 +394,7 @@ async function post(c, b){ await fetch(c, {method:"POST", headers:{"Content-Type
 document.getElementById("f").onsubmit = e => { e.preventDefault(); const t = txt.value.trim(); if(t){ post("/conversa",{texto:t}); txt.value=""; } };
 document.getElementById("obj").onclick = () => { const t = txt.value.trim(); if(t){ post("/objetivo",{texto:t}); txt.value=""; } };
 document.getElementById("parar").onclick = () => post("/parar");
+document.getElementById("reset").onclick = () => { post("/reset"); document.getElementById("chat").innerHTML = ""; n = 0; };
 document.getElementById("falar").onclick = () => { const t = txt.value.trim(); if(t){ post("/falar",{texto:t}); txt.value=""; } };
 document.getElementById("lib").onchange = e => post("/libera", {sim: e.target.checked});
 document.getElementById("conf").onclick = () => { if(confirm("Executar o plano no robô?")) post("/confirma"); };
@@ -397,6 +406,7 @@ async function atualiza(){
     document.getElementById("conf").disabled = !(e.pendente && e.liberado && !e.rodando);
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
     const chat = document.getElementById("chat");
+    if (e.msgs.length < n) { document.getElementById("chat").innerHTML = ""; n = 0; }
     for(const m of e.msgs.slice(n)){
       const d = document.createElement("div"); d.className = "m " + (m.quem === "você" ? "voce" : m.quem.startsWith("robô") ? "robô" : m.quem) + (m.fino ? " fino" : "");
       d.innerHTML = `<span class="t">${m.t} ${m.quem}${m.ms ? " · " + m.ms + " ms" : ""}</span>`;
@@ -471,6 +481,8 @@ def main():
                 threading.Thread(target=o.objetivo, args=(texto,), daemon=True).start()
             elif self.path == "/parar":
                 o.parar()
+            elif self.path == "/reset":
+                o.reset()
             elif self.path == "/confirma":
                 threading.Thread(target=o.confirma, daemon=True).start()
             elif self.path == "/libera":
