@@ -154,7 +154,23 @@ class Orquestrador:
         return vistos
 
     # ── conversa ──
+    COMANDO = re.compile(r"^\s*(por favor\s+)?(coloc|peg|lev|faz|faç|tir|abr|fech|bot|põe|poe|guard|mov|ponh)\w*",
+                         re.IGNORECASE)
+
+    def traduz(self, texto):
+        """Resposta em inglês -> português (o /traduz do servidor do ER-1)."""
+        if not re.search(r"\b(the|is|are|and|to|it|on|of|with)\b", texto.lower()):
+            return texto
+        try:
+            u = f"{self.a.er1}/traduz?" + urllib.parse.urlencode({"t": texto})
+            return json.loads(urllib.request.urlopen(u, timeout=30).read()).get("pt") or texto
+        except Exception:  # noqa: BLE001
+            return texto
+
     def conversa(self, texto):
+        if self.COMANDO.match(texto):   # ordem ("coloca o copo no coador"): vira PLANO (nada vai ao robô sem CONFIRMAR)
+            self.diz("sistema", "isso parece uma ORDEM: vou montar o plano (nada vai ao robô sem CONFIRMAR)", fino=True)
+            return self.objetivo(texto)
         self.diz("você", texto)
         try:
             # 27/10: com a pergunta ANTES das instruções o ER-1 só repetia a pergunta; e sem a lista ele trocava nomes
@@ -166,6 +182,7 @@ class Orquestrador:
                  f'The user asks (in Portuguese): "{texto}"\n'
                  "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
+            r = self.traduz(r)
             self.diz("ER-1", r, ms=ms)
             if self.a.fala_respostas:
                 self.fala(r, "ER-1")
