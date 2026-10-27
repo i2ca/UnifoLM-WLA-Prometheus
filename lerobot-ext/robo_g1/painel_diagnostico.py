@@ -354,9 +354,11 @@ class PoseInicial:
             # CINTURA RETA (27/10): kp 300 cede sob o peso dos braços (~17 Nm na pose de gravação = ~3° para a
             # frente; no descanso ~1,7 Nm, ~0,3°). Integrador no roll/pitch até o MEDIDO chegar ao alvo (±0,12 rad),
             # e só então trava a ponte (ela segue segurando o último comando, já corrigido).
+            # 27/10: DESLIGADO (ENDIREITA_CINTURA_S = 0): com a ponte travada segurando o alvo corrigido, o roll/pitch
+            # ficou brigando com o equilíbrio da Unitree e ESQUENTOU. Volta a 300/8 no alvo 0 (cede ~3° com braço esticado).
             corr = {i: 0.0 for i in CINTURA[1:]}
             t0 = time.time()
-            while time.time() - t0 < 3.0:
+            while time.time() - t0 < ENDIREITA_CINTURA_S:
                 pan, idade_p = D.pega("panico")
                 low, idade_l = D.pega("low")
                 if pan is None or idade_p > 1.0 or pan.get("panico") or idade_l > 0.3:
@@ -380,6 +382,9 @@ class PoseInicial:
             self.estado = f"erro: {e}"
         finally:
             self.rodando = False
+
+
+ENDIREITA_CINTURA_S = 0.0   # s de integrador na cintura antes de travar a ponte (0 = não)
 
 
 # ── fala: o executor do WLA manda PCM (16 kHz, mono, s16le) e o alto-falante do G1 toca ──────

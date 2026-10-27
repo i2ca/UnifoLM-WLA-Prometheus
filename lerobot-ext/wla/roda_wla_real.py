@@ -326,9 +326,10 @@ def main():
     ap.add_argument("--cintura", choices=["yaw", "parada"], default="yaw",
                     help="yaw = gira o tronco como o modelo pede (padrão; o dataset gravou o tronco seguindo a cabeça); "
                          "parada = segura a cintura reta na posição da pose")
-    ap.add_argument("--ki-cintura", type=float, default=1.5,
-                    help="1/s: integrador no roll/pitch da cintura até o MEDIDO ficar reto (±0,12 rad). 27/10: com kp 300 "
-                         "o tronco cedia ~3° para a frente com os braços esticados (~17 Nm); 0 desliga")
+    ap.add_argument("--ki-cintura", type=float, default=0.0,
+                    help="1/s: integrador no roll/pitch da cintura até o MEDIDO ficar reto (±0,12 rad). 27/10: DESLIGADO por "
+                         "padrão — ligado, o roll/pitch ESQUENTOU: o equilíbrio da Unitree puxa o tronco para a frente e o "
+                         "integrador brigava com ele. Sem ele o tronco cede ~3° com os braços esticados")
     ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="kp/kd do yaw da cintura (descanso: 300/8; antes 150/5)")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
