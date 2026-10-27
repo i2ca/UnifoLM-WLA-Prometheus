@@ -201,6 +201,10 @@ class Cabine:
                 "falas": self._falas[-60:],
                 "tradutor": self.tradutor is not None,
                 "fluxos_abertos": self._clientes,
+                # 27/10: o executor com o ER-1 checando "terminou?" (TERMINOU=1) avisa aqui a última tarefa concluída;
+                # a cabine do ER-1 (orquestrador) lê daqui em vez de disputar a GPU com o WLA
+                "terminou_ativo": getattr(self, "terminou_ativo", False),
+                "concluida": getattr(self, "concluida", None),
             }
 
 

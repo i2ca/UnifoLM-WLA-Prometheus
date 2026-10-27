@@ -767,6 +767,7 @@ def main():
                     if antes["sims"] == 2 and antes.get("avisou") != frase:
                         antes["avisou"] = frase
                         fala.diz(f"Task completed: {frase[0].lower() + frase[1:].rstrip('.')}.", "ER-1")
+                        cabine.concluida = {"frase": frase, "t": time.time()}   # a cabine do ER-1 lê daqui
                         print(f"\n✅ ER-1: TAREFA CONCLUÍDA — {frase}", flush=True)
                 except Exception as e:  # noqa: BLE001
                     print(f"\n⚠️  ER-1 (terminou?) indisponível: {e}", flush=True)
@@ -777,6 +778,7 @@ def main():
             fala.diz(texto, "sensores+ER-1")
 
     if fala is not None and a.narra:
+        cabine.terminou_ativo = True
         threading.Thread(target=laco_narra, daemon=True, name="narra").start()
 
     servo_obj = {"P": None, "t": 0.0, "nome": None}   # último objeto apontado (pelvis, m)

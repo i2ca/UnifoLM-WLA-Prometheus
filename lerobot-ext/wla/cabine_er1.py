@@ -18,7 +18,8 @@ TRAVAS (para nada ir ao robô por acidente):
   4. só as frases da lista HABILIDADES vão ao robô, no máximo 4 etapas por objetivo; Enter no campo só CONVERSA.
 
 Precisa no ar: o ER-1 (sobe_er1_pergunta.sh, :8098) e a cabine do robô com o WLA (sobe_cabine_wla.sh, :8090).
-Rode a cabine do robô SEM TERMINOU=1 (quem checa agora é este orquestrador).
+Rode a cabine do robô COM TERMINOU=1: quem pergunta "terminou?" é o executor (revezando a GPU com o WLA); aqui só
+se lê o resultado no /estado.json da cabine (perguntar daqui atrasava o WLA e a pega falhava, 27/10).
 
     python ~/DEV/UnifoLM-WLA-Prometheus/lerobot-ext/wla/cabine_er1.py      # e abra http://<pgx>:8092
 """
@@ -237,6 +238,14 @@ class Orquestrador:
         if motivo:
             self.diz("sistema", f"não vou executar: {motivo}")
             return
+        try:
+            ativo = json.loads(urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=5).read()).get("terminou_ativo")
+        except Exception:  # noqa: BLE001
+            ativo = False
+        if not ativo:
+            self.diz("sistema", "não vou executar: a cabine do robô está SEM o 'terminou?' do ER-1. Suba ela com "
+                                "TERMINOU=1 (quem checa é o executor, sem atrasar o WLA)")
+            return
         self.pendente = None
         self.plano, self.passo, self.rodando = plano, -1, True
         self.cancela.clear()
@@ -264,16 +273,20 @@ class Orquestrador:
                     self.cabine("/tarefa", {"texto": frase})
                     t0, sims = time.time(), 0
                     while time.time() - t0 < self.a.tempo_max:
-                        if self._espera(self.a.checa_s):
+                        if self._espera(2.0):
                             return
+                        # 27/10: quem pergunta "terminou?" é o EXECUTOR (TERMINOU=1), revezando a GPU com o WLA; aqui só
+                        # se lê o resultado na cabine do robô. Perguntar daqui atrasava o WLA (consultas de até 1,6 s) e
+                        # a pega falhava.
                         try:
-                            sim = self.terminou(frase)
-                        except Exception as e:  # noqa: BLE001
-                            self.diz("sistema", f"ER-1 (terminou?) falhou: {e}")
+                            e = json.loads(urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=5).read())
+                        except Exception as ex:  # noqa: BLE001
+                            self.diz("sistema", f"cabine do robô não respondeu: {ex}")
                             continue
-                        sims = sims + 1 if sim else 0
-                        self.diz("ER-1", f"terminou \"{PT[frase]}\"? {'sim' if sim else 'não'} ({sims}/2)", fino=True)
-                        if sims >= 2:
+                        c = e.get("concluida") or {}
+                        if c.get("frase") == frase and c.get("t", 0) > t0:
+                            sims = 2
+                            self.diz("ER-1", f"terminou \"{PT[frase]}\": sim (2 confirmações no executor)", fino=True)
                             break
                     if sims >= 2:
                         self.diz("orquestrador", f"✅ etapa {i + 1} concluída: {PT[frase]}")
