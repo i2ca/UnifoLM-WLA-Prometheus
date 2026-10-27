@@ -256,9 +256,10 @@ def main():
     ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
                     help="roll e pitch da cintura (alvo 0 = coluna reta, como na gravação). 02/10: com 150/5 o pitch "
                          "ficava 0,08-0,16 rad à frente e o roll/pitch esquentou até a cintura ceder; a gravação usou 300/8")
-    ap.add_argument("--temp-tronco", type=float, default=75.0,
+    ap.add_argument("--temp-tronco", type=float, default=0.0,
                     help="°C: acima disto no roll/pitch da cintura PARA a tarefa e volta à posição inicial (mão aberta) "
-                         "para esfriar; 0 = só avisa. 27/10: ligado (o roll chegou a 86 °C e desabilitou)")
+                         "para esfriar; 0 = só avisa a partir de 60 °C (padrão: 27/10 o usuário pediu sem a proteção; "
+                         "use --temp-tronco 75 para ligar)")
     ap.add_argument("--kp-roll", type=float, nargs=2, default=[100.0, 4.0], metavar=("KP", "KD"),
                     help="kp/kd do ROLL da cintura (o pitch segue --kp-tronco). 27/10: com 300/8 o roll esquentou a 86 °C "
                          "— ele quase não segura peso, e qualquer diferença do 'zero' virava força contínua")
