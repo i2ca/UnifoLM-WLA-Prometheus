@@ -481,6 +481,8 @@ class Trava:
                 cmd.crc = self.crc.Crc(cmd)
                 self.pubs["corpo"].Write(cmd)
             for lado, d in (mao or {}).items():
+                if CORPO["amortecido"]:
+                    continue   # corpo amortecido: quem manda nas mãos é a fsm_loop (soltas)
                 self.pubs[lado].Write(dict_to_handcmd(d))
             time.sleep(0.01)
 
@@ -736,6 +738,67 @@ def cmd_forward_loop(lowcmd_sock, lowcmd_pub, crc, shutdown_event):
         cmd.crc = crc.Crc(cmd)
         lowcmd_pub.Write(cmd)
 
+# ── CORPO AMORTECIDO -> MÃOS SOLTAS (27/10) ────────────────────────────────────────────────────────────────
+# Quando a cintura esquentou o corpo foi para o modo amortecido (FSM 1), mas a Dex3 continuou segurando: as mãos
+# não obedecem ao controle remoto da Unitree. Agora, com o corpo em FSM 0 (torque zero) ou 1 (amortecido), a ponte
+# manda as mãos com força ZERO (kp 0, só um pouco de amortecimento) e ignora os comandos de mão do PC até o corpo
+# sair desse modo.
+CORPO = {"fsm": None, "amortecido": False}
+FSM_SOLTA = (0, 1)
+
+
+def mao_solta(data):
+    """O mesmo comando de mão, sem força: kp 0, kd baixo, tau 0 (os dedos ficam soltos, sem segurar nada)."""
+    d = json.loads(json.dumps(data))
+    for m in d.get("motor_cmd", []):
+        m["kp"], m["kd"], m["tau"], m["dq"] = 0.0, 0.05, 0.0, 0.0
+    return d
+
+
+def mao_solta_nova(lado):
+    """Comando de mão solta mesmo sem nenhum comando do PC antes (7 motores da Dex3)."""
+    msg = TRAVA.maos.get(lado) if TRAVA is not None else None
+    mc = [{"mode": (k & 0x0F) | (0x01 << 4), "q": float(msg.motor_state[k].q) if msg is not None else 0.0,
+           "dq": 0.0, "kp": 0.0, "kd": 0.05, "tau": 0.0} for k in range(7)]
+    return {"motor_cmd": mc}
+
+
+def fsm_loop(left_pub, right_pub, shutdown_event):
+    """Lê o modo do corpo (LocoClient GET_FSM_ID) a cada 0,3 s; amortecido -> mãos soltas a 20 Hz."""
+    try:
+        from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
+        from unitree_sdk2py.g1.loco.g1_loco_api import ROBOT_API_ID_LOCO_GET_FSM_ID
+        cli = LocoClient()
+        cli.SetTimeout(1.0)
+        cli.Init()
+    except Exception as e:  # noqa: BLE001
+        print(f"[Corpo] ⚠️  não consigo ler o modo do corpo ({e}): mãos NÃO soltam sozinhas", flush=True)
+        return
+    ult = 0.0
+    while not shutdown_event.is_set():
+        agora = time.time()
+        if agora - ult >= 0.3:
+            ult = agora
+            try:
+                code, data = cli._Call(ROBOT_API_ID_LOCO_GET_FSM_ID, "{}")
+                fsm = json.loads(data).get("data") if code == 0 else None
+            except Exception:  # noqa: BLE001
+                fsm = None
+            if fsm is not None:
+                amort = fsm in FSM_SOLTA
+                if amort != CORPO["amortecido"] or CORPO["fsm"] is None:
+                    print(f"[Corpo] modo {fsm}: " + ("AMORTECIDO -> mãos SOLTAS (força zero)" if amort
+                                                      else "ativo -> mãos voltam ao comando do PC"), flush=True)
+                CORPO["fsm"], CORPO["amortecido"] = fsm, amort
+        if CORPO["amortecido"]:
+            for lado, pub in (("left", left_pub), ("right", right_pub)):
+                try:
+                    pub.Write(dict_to_handcmd(mao_solta_nova(lado)))
+                except Exception:  # noqa: BLE001
+                    pass
+        time.sleep(0.05)
+
+
 def handcmd_forward_loop(handcmd_sock, left_pub, right_pub, shutdown_event):
     while not shutdown_event.is_set():
         try: payload = handcmd_sock.recv(zmq.NOBLOCK)
@@ -749,6 +812,8 @@ def handcmd_forward_loop(handcmd_sock, left_pub, right_pub, shutdown_event):
         lado = "left" if topic == kTopicDex3LeftCommand else "right" if topic == kTopicDex3RightCommand else None
         if lado is None:
             continue
+        if CORPO["amortecido"]:
+            continue   # corpo amortecido: a fsm_loop manda as mãos soltas
         data = TRAVA.filtra_mao(lado, msg_dict.get("data", {}))   # v3: pânico + lento/leve
         if data is None:
             continue
@@ -972,6 +1037,8 @@ def main():
         args=(handcmd_sock, left_hand_cmd_pub, right_hand_cmd_pub, shutdown_event),
         daemon=True,
     )
+    t_fsm = threading.Thread(target=fsm_loop, args=(left_hand_cmd_pub, right_hand_cmd_pub, shutdown_event),
+                             daemon=True, name="corpo_fsm")   # 27/10: corpo amortecido -> mãos soltas
     # ← NOVO: thread que fica anunciando o modo ativo
     t_status = threading.Thread(
         target=status_broadcast_loop,
@@ -988,6 +1055,8 @@ def main():
         )
 
     t_state.start()
+    if use_loco:
+        t_fsm.start()
     t_handstate.start()
     t_handcmd.start()
     t_status.start()
