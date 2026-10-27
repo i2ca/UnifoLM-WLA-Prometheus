@@ -41,15 +41,16 @@ HABILIDADES = [
 ]
 # a mesa do café (objetos_cafe/objetos.json): o ER-1 CONFIRMA um a um (sim/não) antes de responder — com a lista
 # inteira no texto ele citava tudo, até a maçã que não estava na mesa (27/10)
-OBJETOS_MESA = {
-    "an electric stainless-steel kettle with a black handle": "Is there an electric kettle on the table?",
-    "a light brown plastic coffee dripper (coffee strainer)": "Is there a light brown coffee dripper (coffee strainer) on the table?",
-    "a white ceramic mug": "Is there a white mug on the table?",
-    "a dark brown ceramic coffee jar": "Is there a dark brown coffee jar on the table?",
-    "the round dark brown lid of the coffee jar, lying on the table": "Is there a round dark brown lid lying on the table, separate from the jar?",
-    "a small black coffee scoop": "Is there a small black coffee scoop on the table?",
-    "a black X taped on the table": "Is there a black X mark on the table?",
-    "a red apple": "Is there a red apple on the table?",
+OBJETOS_MESA = {   # nome em português (o que o ER-1 deve usar) -> perguntas sim/não (qualquer "sim" vale)
+    "chaleira elétrica de inox": ["Is there an electric kettle on the table?", "Is there a kettle on the table?"],
+    "coador de café (marrom-claro, no suporte)": ["Is there a light brown coffee dripper (coffee strainer) on the table?",
+                                                  "Is there a coffee filter cone on a stand?"],
+    "caneca branca": ["Is there a white mug on the table?"],
+    "pote de café (marrom-escuro)": ["Is there a dark brown coffee jar on the table?"],
+    "tampa do pote (fora do pote)": ["Is there a round dark brown lid lying on the table, separate from the jar?"],
+    "concha de café preta": ["Is there a small black coffee scoop on the table?"],
+    "X preto na mesa": ["Is there a black X mark on the table?"],
+    "maçã vermelha": ["Is there a red apple on the table?"],
 }
 PT = {
     "Pick up the white mug.": "pegar a caneca branca",
@@ -66,6 +67,7 @@ class Orquestrador:
         self.rodando, self.cancela = False, threading.Event()
         self.plano, self.passo = [], -1
         self.pendente, self.pendente_t = None, 0.0     # plano esperando CONFIRMAR (expira em 60 s)
+        self.historico = []                            # (pergunta, resposta) — memória da conversa
         self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
 
     # ── registro (a página lê por /estado) ──
@@ -144,17 +146,21 @@ class Orquestrador:
         return None
 
     def objetos_presentes(self):
-        """Pergunta sim/não (ER-1 original) para cada objeto conhecido; devolve os que ele vê."""
-        vistos = []
-        for nome, q in OBJETOS_MESA.items():
-            try:
-                r, _ = self.er1(q + " Answer only yes or no.", max_tok=3, lora=0, timeout=20)
-                if r.lower().startswith("yes"):
-                    vistos.append(nome)
-            except Exception:  # noqa: BLE001
-                pass
-        print("[ER-1] confirmei na mesa: " + (", ".join(n.split(" (")[0] for n in vistos) or "nada da lista"), flush=True)
-        return vistos
+        """Pergunta sim/não (ER-1 original) para cada objeto conhecido; devolve (vistos, ausentes) em português."""
+        vistos, ausentes = [], []
+        for nome, qs in OBJETOS_MESA.items():
+            sim = False
+            for q in qs:
+                try:
+                    r, _ = self.er1(q + " Answer only yes or no.", max_tok=3, lora=0, timeout=20)
+                    if r.lower().startswith("yes"):
+                        sim = True
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+            (vistos if sim else ausentes).append(nome)
+        print("[ER-1] confirmei na mesa: " + (", ".join(vistos) or "nada da lista"), flush=True)
+        return vistos, ausentes
 
     # ── conversa ──
     COMANDO = re.compile(r"^\s*(por favor\s+)?(coloc|peg|lev|faz|faç|tir|abr|fech|bot|põe|poe|guard|mov|ponh)\w*",
@@ -178,14 +184,20 @@ class Orquestrador:
         try:
             # 27/10: com a pergunta ANTES das instruções o ER-1 só repetia a pergunta; e sem a lista ele trocava nomes
             # ("copo de vidro" = coador, "xícara" = pote). Agora: papel -> objetos que podem estar na mesa -> pergunta.
-            presentes = self.objetos_presentes()
-            q = ("You are the brain of a humanoid robot (Unitree G1). The image is from your head camera, looking at a "
-                 "table in front of you. Objects CONFIRMED on the table right now: "
-                 f"{'; '.join(presentes) if presentes else 'none of the known objects'}.\n"
-                 f'The user asks (in Portuguese): "{texto}"\n'
-                 "Answer the question in Brazilian Portuguese, in 1-3 short sentences. Only mention things you really see.")
+            vistos, ausentes = self.objetos_presentes()
+            conversa = "".join(f"Usuário: {u}\nRobô: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
+            q = ("Você é o cérebro de um robô humanoide (Unitree G1). A imagem é da câmera da sua cabeça, olhando a mesa "
+                 "à sua frente.\n"
+                 f"Objetos CONFIRMADOS na mesa agora (use EXATAMENTE estes nomes em português): "
+                 f"{'; '.join(vistos) if vistos else 'nenhum dos conhecidos'}.\n"
+                 f"Objetos que NÃO estão na mesa: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
+                 "Nunca diga que um objeto confirmado não está na mesa. 'Copo' e 'caneca' são a mesma coisa.\n"
+                 + (f"Conversa até agora:\n{conversa}" if conversa else "")
+                 + f"Usuário: {texto}\nResponda em português do Brasil, em 1 a 3 frases curtas, como o robô.\nRobô:")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             r = self.traduz(r)
+            self.historico.append((texto, r))
+            self.historico = self.historico[-20:]
             fala = bool(self.a.fala_respostas)
             self.diz("ER-1" + (" 🔊" if fala else ""), r, ms=ms)
             if fala:
@@ -404,6 +416,7 @@ def main():
     ap.add_argument("--piper", default=str(__import__("pathlib").Path.home() / "wla_testes/tts"))
     ap.add_argument("--voz", default="pt_BR-faber-medium.onnx", help="voz Piper (pasta --piper)")
     ap.add_argument("--fala-respostas", type=int, default=1, help="1 = o robô fala as respostas do ER-1 na conversa")
+    ap.add_argument("--memoria", type=int, default=6, help="quantas trocas anteriores da conversa o ER-1 recebe")
     ap.add_argument("--cabine-navegador", default=None,
                     help="endereço da cabine do robô como o NAVEGADOR o vê (para a câmera); padrão: o mesmo host da página, :8090")
     ap.add_argument("--checa-s", type=float, default=5.0, help="segundos entre os 'terminou?'")
