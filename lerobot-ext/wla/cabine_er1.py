@@ -153,6 +153,8 @@ class Orquestrador:
         if self.a.led_voz and e == "acordou":
             self.led((0, 120, 255))
             self.fala("Sim?", "voz", registra=False)
+        elif self.a.led_voz and e == "parado" and not self.rodando:
+            self.led(self.led_base)   # o assistente da Unitree acende azul quando ouve voz: volta para a nossa cor
 
     def voz_pergunta(self, texto):
         """Ouviu "Prometheus, <texto>": pergunta de luz é resolvida aqui; o resto vai para a conversa (uma ORDEM vira

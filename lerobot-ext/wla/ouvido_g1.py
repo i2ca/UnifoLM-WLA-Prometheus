@@ -2,8 +2,7 @@
 
 O painel do robô liga o microfone (voice API 1008 {"mode": 1}); o arranjo de 4 microfones manda PCM 16 kHz mono s16
 por multicast UDP 239.168.123.161:5555. Aqui (na PGX, na rede do robô):
-  1. detector de voz por energia, com o nível do ruído medido continuamente: junta um trecho de fala até ~0,8 s de
-     silêncio (no máx. --max-s);
+  1. detector de voz Silero (VAD): junta um trecho de fala até ~0,8 s de silêncio (no máx. --max-s);
   2. Whisper large-v3-turbo (transformers, GPU) em português;
   3. PALAVRA DE ATIVAÇÃO: só reage ao que começa com (ou contém) "Prometheus" — o Whisper escreve Prometeu,
      Prometeus, Prometius...; "Prometheus" sozinho abre uma janela de --janela-s para a pergunta vir na fala seguinte;
@@ -89,7 +88,7 @@ def inventada(texto):
 
 class Ouvido:
     def __init__(self, ao_ouvir, estado=None, ip_local="192.168.123.165", modelo="openai/whisper-large-v3-turbo",
-                 janela_s=8.0, max_s=12.0, silencio_s=0.8, gpu_lock=None, log=print):
+                 janela_s=8.0, max_s=8.0, silencio_s=0.7, gpu_lock=None, log=print):
         self.ao_ouvir, self.estado, self.log = ao_ouvir, estado or (lambda e: None), log
         self.ip_local, self.modelo_nome = ip_local, modelo
         self.janela_s, self.max_s, self.silencio_s = janela_s, max_s, silencio_s
@@ -142,7 +141,17 @@ class Ouvido:
                 time.sleep(3)
 
     def _escuta(self, s):
-        fala, silencio, falando, forte = [], 0.0, False, 0.0
+        """28/10: SILERO VAD (rede de detecção de voz) em blocos de 512 amostras = 1 pacote do microfone do G1. O
+        detector por energia não fechava o trecho (o ruído do ventilador varia) e gravava até o limite."""
+        import collections
+
+        import torch
+        from silero_vad import VADIterator, load_silero_vad
+        torch.set_num_threads(1)
+        vad = VADIterator(load_silero_vad(), sampling_rate=SR, threshold=0.5, min_silence_duration_ms=int(
+            self.silencio_s * 1000), speech_pad_ms=150)
+        antes = collections.deque(maxlen=20)   # ~0,6 s antes do início (o começo do "Prometheus")
+        fala, falando = [], False
         while True:
             try:
                 d, _ = s.recvfrom(65536)
@@ -150,30 +159,33 @@ class Ouvido:
                 continue
             self.pacotes += 1
             x = np.frombuffer(d, dtype=np.int16)
-            dur = len(x) / SR
-            rms = float(np.sqrt(np.mean(x.astype(np.float32) ** 2))) if len(x) else 0.0
             if not self.ligado or time.time() < self._surdo:
-                fala, silencio, falando = [], 0.0, False
+                if falando:
+                    self.estado("parado")
+                fala, falando = [], False
+                antes.clear()
+                vad.reset_states()
                 continue
-            alto = rms > max(1.8 * self.nivel_ruido, 350.0)   # a voz chega pouco acima do ventilador
+            ev = None
+            for i in range(0, len(x) - 511, 512):
+                # o microfone chega BAIXO: 4x só para o detector (o ventilador fica em ~0,2 de confiança, voz > 0,5)
+                e = vad(torch.from_numpy(np.clip(x[i:i + 512].astype(np.float32) * (4.0 / 32768.0), -1.0, 1.0)))
+                ev = e or ev
             if not falando:
-                self.nivel_ruido = 0.98 * self.nivel_ruido + 0.02 * min(rms, 3 * self.nivel_ruido)
-                fala = (fala + [x])[-20:]   # guarda ~0,6 s antes do início ("Prometheus" se perdia no começo)
-                if alto:
-                    falando, silencio, forte = True, 0.0, 0.0
+                antes.append(x)
+                if ev and "start" in ev:
+                    falando, fala = True, list(antes)
                     self.estado("ouvindo")
                 continue
             fala.append(x)
-            if rms > 2.5 * self.nivel_ruido:
-                forte += dur
-            silencio = 0.0 if alto else silencio + dur
             total = sum(len(f) for f in fala) / SR
-            if silencio >= self.silencio_s or total >= self.max_s:
+            if (ev and "end" in ev) or total >= self.max_s:
                 falando = False
+                antes.clear()
+                vad.reset_states()
                 audio = np.concatenate(fala).astype(np.float32) / 32768.0
                 fala = []
-                # voz de VERDADE: >= 0,3 s bem acima do ventilador (ruído virava "frase" no Whisper)
-                if total - silencio >= 0.35 and forte >= 0.3:
+                if total >= 0.5:
                     threading.Thread(target=self._entende, args=(audio,), daemon=True).start()
                 else:
                     self.estado("parado")
@@ -208,6 +220,8 @@ class Ouvido:
         agora = time.time()
         if m:
             pergunta = (texto[:m[0]] + " " + texto[m[1]:]).strip(" ,.!?;:-")
+            pergunta = ATIVA.sub(" ", _sem_acento(pergunta)) if ATIVA.search(_sem_acento(pergunta)) else pergunta
+            pergunta = re.sub(r"\s+", " ", pergunta).strip(" ,.!?;:-")
         elif agora < self._acordado_ate:
             pergunta = texto
         else:
