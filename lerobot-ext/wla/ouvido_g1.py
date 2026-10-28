@@ -190,6 +190,22 @@ class Ouvido:
                 else:
                     self.estado("parado")
 
+    def _guarda(self, audio):
+        """Os últimos 10 trechos em ~/ouvido_trechos/*.wav (para ouvir o que o microfone pegou)."""
+        try:
+            import wave
+            from pathlib import Path
+            pasta = Path.home() / "ouvido_trechos"
+            pasta.mkdir(exist_ok=True)
+            w = wave.open(str(pasta / time.strftime("%H%M%S.wav")), "wb")
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(SR)
+            w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+            w.close()
+            for velho in sorted(pasta.glob("*.wav"))[:-10]:
+                velho.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+
     # ── fala -> texto -> ativação ──
     def _entende(self, audio):
         if self._asr is None:
@@ -197,6 +213,7 @@ class Ouvido:
             return
         self.estado("entendendo")
         t0 = time.time()
+        self._guarda(audio)
         pico = float(np.abs(audio).max()) or 1.0
         audio = audio * min(0.9 / pico, 20.0)   # normaliza o volume (o microfone chega baixo)
         kw = {"language": "portuguese", "task": "transcribe"}
