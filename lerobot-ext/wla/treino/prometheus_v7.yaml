@@ -1,0 +1,166 @@
+# 28/10 V7 — MODELO NOVO a partir do UnifoLM-WLA-1.0-Base (nada do v2..v6), RASCUNHO PARA VALIDAR.
+# Dados: só datasets com os DEDOS MEDIDOS (dados_prometheus_v7.yaml). TUDO descongelado (visão, VLM, projetor de estado,
+# DiT), lr por módulo, perda de FRASE TROCADA (obriga a usar o texto), profundidade da ZED, aumento de imagem e
+# câmeras desligadas. Treino: treina_wla_v7.py. [NOVO] = ainda falta implementar.
+run_id: prometheus_v7
+run_root_dir: playground/Checkpoints
+seed: 42
+wandb_entity: prometheus-lcad
+wandb_project: unifolm_wla_finetune
+is_debug: false
+
+framework:
+  name: QwenMMDiT
+  qwenvl:
+    # Overridden at launch to <base_model_dir>/tokenizer — the released
+    # checkpoint's own VLM weights are already in `trainer.pretrained_checkpoint`
+    # below, so `base_vlm` only needs to supply the architecture config +
+    # tokenizer (see `_is_weightless_base_vlm` in unifolm_wla/model/modules/vlm/QWen3.py).
+    base_vlm: /path/to/UnifoLM-WLA-1.0-Base/tokenizer
+    attn_implementation: flash_attention_2
+    vl_hidden_dim: 2560
+  robot_state_projector:
+    enabled: true
+    input_dim: 120
+    projector_hidden_size: null
+    load_from: null
+  action_model:
+    action_model_type: DiT-L
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 54
+    state_dim: 0
+    action_horizon: 30
+    repeated_diffusion_steps: 1
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    embodiment_types: ["unitree"]
+    diffusion_model_cfg:
+      cross_attention_dim: 2560
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: "ada_norm"
+      num_layers: 16
+      num_attention_heads: 32
+      attention_head_dim: 48
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_py: multi_source_datasets
+    data_config_path: unifolm_wla/dataloader/multi_source_dataset/configs/prometheus_v7.yaml   # = dados_prometheus_v7.yaml
+    per_device_batch_size: 4
+    num_workers: 4
+
+trainer:
+  pretrained_checkpoint: /path/to/UnifoLM-WLA-1.0-Base/checkpoints/model.safetensors   # trocado no lançamento
+  is_resume: false
+  freeze_modules: ""          # TUDO treina (v4..v6 congelavam o qwen_vl_interface e, sem querer, o projetor de estado)
+  lora:
+    enabled: false            # treino completo, sem LoRA
+  # lr POR MÓDULO (treina_wla_v7.build_param_lr_groups: o 1º módulo da lista que pega o parâmetro fica com ele).
+  # Valores iniciais; a FASE 0 (curvas do v2/v3 por parte) ajusta: o que aprende rápido = baixo, o que demora = alto.
+  learning_rate:
+    base: 1.0e-04                                          # o resto (lm_head etc.)
+    qwen_vl_interface.model.model.visual: 2.0e-06          # visão: MUITO baixo (no v2 treinar a visão deu NaN no passo 3)
+    qwen_vl_interface.model.model.language_model: 1.0e-05  # VLM: já vem pronto do base
+    qwen_vl_interface.model.robot_state_projector: 2.0e-04 # projetor de estado: o que nunca treinou -> alto
+    action_model: 1.0e-04                                  # DiT inteiro (o txt_in, que lê o VLM, vai junto)
+  max_train_steps: 15000
+  num_warmup_steps: 1500      # aquecimento longo (visão descongelada)
+  save_interval: 1000
+  eval_interval: 2500
+  logging_frequency: 10
+  gradient_accumulation_steps: 2
+  gradient_clipping: 1.0
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+  save_format: safetensors
+  teste_curto: 200            # 1º lançamento: 200 passos (NaN/memória); o longo: trainer.teste_curto=0
+
+  v2:
+    split: /data/mrwlker/wla_v7/descricao/split.json   # descreve_datasets.py: 5 eps de validação por dataset
+    balanceia: 1.0            # tarefas com o mesmo peso
+    val_intervalo: 500
+    val_lotes: 24
+    val_lote: 4
+    val_cache: /data/mrwlker/wla_v7/val_v7.pt
+    # peso de cada parte da ação na perda — FASE 0 (28/10, mse na validação, base da Unitree -> v3 7500 -> v6 5000):
+    #   mão dir. xyz 0,50 -> 0,12 -> 0,12 | dedos dir. 0,95 -> 0,25 -> 0,24   = LENTOS e param no mesmo nível (difíceis)
+    #   braço esq. 0,29 -> 0,05 | dedos esq. 1,48 -> 0,0002 | cintura 0,049 -> 0,002 | pernas 0,04 -> 0,001 = RÁPIDOS
+    pesos:
+      right_xyz_rotvec: 3.0   # mão direita: a mais difícil
+      right_fig6d: 3.0        # dedos da direita: quando fechar (a pega) — o pior erro em todos os modelos
+      waist_joint: 1.5        # cintura: aprende rápido, mas o YAW até o coador não saiu no robô (era 0,5)
+      left_xyz_rotvec: 0.5    # braço esquerdo quase parado nas tarefas
+      left_fig6d: 0.1         # mão esquerda parada: aprende em poucos passos
+    texto_vazio: 0.0          # desligado: a perda de frase trocada faz esse papel (o CFG não teve efeito no v4/v5)
+    # v7: VÁRIOS IDIOMAS (o Qwen3-VL entende): o modelo aprende o SENTIDO, não a frase decorada, e aceita a ordem
+    # em português direto do ER-1/cabine. A 1ª de cada lista é a que o servidor e a validação mandam.
+    frases:
+      "Pick up the white mug.":
+        - "Pick up the white mug from the side, with the right hand upright."
+        - "Grasp the white mug from the side with the right hand upright and lift it."
+        - "Pegue a caneca branca pelo lado, com a mão direita em pé."
+        - "Pega a caneca branca e levanta."
+        - "Agarra la taza blanca por el costado con la mano derecha y levántala."
+      "Pick up the apple.":
+        - "Pick up the red apple from above, with the right palm facing down."
+        - "Grasp the red apple from above with the right palm facing down and lift it."
+        - "Pegue a maçã vermelha por cima, com a palma da mão direita para baixo."
+        - "Pega a maçã e levanta."
+        - "Agarra la manzana roja desde arriba con la palma derecha hacia abajo."
+      "Place the white mug under the coffee strainer.":
+        - "Carry the white mug in the right hand and place it under the coffee strainer."
+        - "Put the mug you are holding under the coffee dripper."
+        - "Leve a caneca branca na mão direita e coloque embaixo do coador de café."
+        - "Coloca a caneca embaixo do coador."
+        - "Lleva la taza blanca en la mano derecha y ponla debajo del filtro de café."
+
+    # TEXTO (treina_wla_v7.py): em metade dos passos o MESMO lote passa de novo com a frase de outra tarefa (mesmo
+    # ruído do fluxo); a perda com a frase certa tem que ficar menor que com a trocada por uma margem RELATIVA:
+    # max(0, margem * L_certa + L_certa - L_trocada). wandb: lingua_loss e lingua_razao_treino (trocada/certa).
+    lingua_contraste:
+      prob: 0.5               # metade dos passos (cada um custa mais um forward)
+      peso: 1.0               # o máximo razoável: igual à perda da ação (mais que isso desestabiliza)
+      margem: 0.2             # a frase trocada tem que errar >= 20% mais que a certa
+      comeca_em: 1000         # liga depois do aquecimento (antes a ação ainda é ruído)
+
+    # PROFUNDIDADE da ZED (SN19436, estereo_zed.py): calculada OFFLINE (profundidade_v7.py: Depth Anything V2 + escala do
+    # estéreo) a partir de head_stereo_left/right -> vídeo head_depth (mapa de cor, 0,3–1,2 m). No robô o executor calcula ao vivo.
+    profundidade:
+      papel: head_depth
+      faixa_m: [0.3, 1.2]
+
+    # AUMENTO DE IMAGEM (wla_v2.aumenta_imagens; só no treino; cabeça e profundidade com a MESMA geometria)
+    aumento_imagem:
+      rotacao_graus: 3.0
+      desloca_frac: 0.04      # deslocamento/recorte até 4%
+      brilho: 0.2
+      contraste: 0.2
+      saturacao: 0.2
+      tom: 0.03
+      ruido_std: 0.02         # ruído gaussiano (imagem 0..1)
+      na_profundidade: false  # na profundidade só deslocamento/rotação (cor não faz sentido)
+
+    # CÂMERAS DESLIGADAS (wla_v2.desliga_cameras: image_mask False = o papel sai do prompt, como câmera ausente)
+    desliga_camera:
+      punhos: 0.15            # 15%: os DOIS punhos pretos (aprende pela cabeça)
+      um_punho: 0.10          # 10%: só um dos punhos
+      cabeca: 0.10            # 10%: cabeça (e profundidade) pretas (aprende pelos punhos)
+
+  cotreino:                   # perguntas do ER-1 nas nossas imagens: NOME e LUGAR de cada objeto (diferenciar)
+    jsonl: /data/mrwlker/wla_v2/vqa_v4/treino.jsonl   # as do v4 (nomes, etapas, apontar); [NOVO] refazer com os objetos do café em PT
+    peso: 0.3                 # era 0,1
+    lote: 4

@@ -167,14 +167,80 @@ class Marcadores:
         return None
 
 
+# ── V7 (28/10): AUMENTO DE IMAGEM e CÂMERAS DESLIGADAS (só no treino) ────────────────────────────────────────
+# As imagens chegam como tensor (C, H, W) em 0..1. A cabeça e a profundidade dela recebem a MESMA geometria
+# (continuam alinhadas); cada punho, a sua. Cor e ruído não entram na profundidade (o mapa de cor É a medida).
+# Câmera desligada = image_mask False: o modelo da Unitree tira o papel do prompt (QwenMMDiT, linha
+# `roles = [r ... if batch["image_mask"][r][i]]`), igual a uma câmera que não existe — e não uma imagem preta.
+CABECA = ("head_left", "head_depth")
+PUNHOS = ("cam_wrist_left", "cam_wrist_right")
+
+
+def _geometria(imgs, graus, desloca):
+    import torchvision.transforms.v2.functional as F
+    if not imgs:
+        return imgs
+    _, h, w = imgs[0].shape
+    ang = random.uniform(-graus, graus)
+    tx, ty = (int(round(random.uniform(-desloca, desloca) * n)) for n in (w, h))
+    esc = 1.0 + random.uniform(0, desloca)          # um pouco de zoom: não aparece borda preta na rotação
+    return [F.affine(x, angle=ang, translate=[tx, ty], scale=esc, shear=[0.0, 0.0]) for x in imgs]
+
+
+def _cor(x, c):
+    import torchvision.transforms.v2.functional as F
+    x = F.adjust_brightness(x, 1 + random.uniform(-c["brilho"], c["brilho"]))
+    x = F.adjust_contrast(x, 1 + random.uniform(-c["contraste"], c["contraste"]))
+    x = F.adjust_saturation(x, 1 + random.uniform(-c["saturacao"], c["saturacao"]))
+    if c.get("tom", 0) > 0:
+        x = F.adjust_hue(x, random.uniform(-c["tom"], c["tom"]))
+    if c.get("ruido_std", 0) > 0:
+        x = x + torch.randn_like(x) * c["ruido_std"]
+    return x.clamp(0, 1)
+
+
+def aumenta_imagens(item, c):
+    """c = trainer.v2.aumento_imagem. Mexe em item["images"] (papel -> tensor CHW 0..1)."""
+    imgs, mask = item["images"], item.get("image_mask", {})
+    grupos = [[r for r in CABECA if r in imgs]] + [[r] for r in PUNHOS if r in imgs]
+    for g in grupos:
+        g = [r for r in g if mask.get(r, True) and torch.is_tensor(imgs[r]) and imgs[r].is_floating_point()]
+        novas = _geometria([imgs[r] for r in g], c.get("rotacao_graus", 3.0), c.get("desloca_frac", 0.04))
+        for r, x in zip(g, novas):
+            imgs[r] = x if (r == "head_depth" and not c.get("na_profundidade", False)) else _cor(x, c)
+    return item
+
+
+def desliga_cameras(item, c):
+    """c = trainer.v2.desliga_camera {punhos, um_punho, cabeca}: uma situação por amostra, nunca todas."""
+    imgs, mask = item["images"], item.setdefault("image_mask", {})
+    sorteio, fora = random.random(), ()
+    p1, p2, p3 = c.get("punhos", 0.0), c.get("um_punho", 0.0), c.get("cabeca", 0.0)
+    if sorteio < p1:
+        fora = PUNHOS
+    elif sorteio < p1 + p2:
+        fora = (random.choice(PUNHOS),)
+    elif sorteio < p1 + p2 + p3:
+        fora = CABECA
+    vivas = [r for r in imgs if mask.get(r, True) and r not in fora]
+    if not vivas:          # sobraria nenhuma: não desliga
+        return item
+    for r in fora:
+        if r in imgs:
+            imgs[r] = torch.zeros_like(imgs[r])
+            mask[r] = False
+    return item
+
+
 class Balanceado(torch.utils.data.Dataset):
     """Invólucro do SingleSourceDataset com os índices repetidos por tarefa e, opcionalmente, a FRASE da tarefa
     trocada pela descritiva (frases = {frase do dataset: frase nova}). Fica no nível do módulo para viajar
     (pickle) até os leitores, que são processos novos (spawn): um ajuste na CLASSE não chegava lá (21/10)."""
 
     def __init__(self, ds, mapa, frases=None, marcadores=None, papel_cabeca="head_left", treino=True, texto_vazio=0.0,
-                 distratores=None):
+                 distratores=None, aumento=None, desliga=None):
         self.ds, self.mapa, self.frases = ds, mapa, frases or {}
+        self.aumento, self.desliga = aumento, desliga   # v7: aumento de imagem e câmeras desligadas (só treino)
         self.distratores = distratores   # v5: {"banco": (N,3,L,L), "prob": 0.7, "max": 3}
         self.texto_vazio = texto_vazio   # CFG: fração das amostras com a frase VAZIA (o modelo aprende "sem frase")
         self.marcadores, self.papel, self.treino = marcadores, papel_cabeca, treino
@@ -228,22 +294,32 @@ class Balanceado(torch.utils.data.Dataset):
             item.pop("cabeca_limpa", None)
         if self.treino and self.texto_vazio > 0 and random.random() < self.texto_vazio:
             item["task"] = ""
+        if self.treino and self.aumento:
+            item = aumenta_imagens(item, self.aumento)
+        if self.treino and self.desliga:
+            item = desliga_cameras(item, self.desliga)
         return item
 
     def __getattr__(self, nome):   # normalização, estatísticas etc. vêm do dataset de dentro
-        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum", "texto_vazio", "distratores") \
+        if nome in ("ds", "mapa", "frases", "marcadores", "ep_quadro", "papel", "treino", "nomes", "cum", "texto_vazio", "distratores",
+                    "aumento", "desliga") \
                 or nome.startswith("__"):
             raise AttributeError(nome)
         return getattr(self.ds, nome)
 
 
-def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.0, distratores=None):
+def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.0, distratores=None, aumento=None,
+                          desliga=None):
     """Repete os quadros das tarefas menores: fator = (maior / tamanho) ** alfa (0 = sem repetir). frases: troca
     a frase da tarefa (ex.: "Pick up the white mug." -> "... from the side with the right hand upright.")."""
     from unifolm_wla.dataloader.multi_source_dataset import dataloader as DL
     if getattr(DL, "_balanceado", None) is not None or (alfa <= 0 and not frases and marcadores is None
-                                                        and not texto_vazio):
+                                                        and not texto_vazio and not aumento and not desliga):
         return
+    if aumento:
+        print(f"🎨 aumento de imagem: {aumento}", flush=True)
+    if desliga:
+        print(f"📷 câmeras desligadas no treino: {desliga}", flush=True)
     if distratores:
         print(f"🧸 distratores: {len(distratores['banco'])} recortes, em {distratores.get('prob', 0.7):.0%} das amostras, "
               f"até {distratores.get('max', 3)} por imagem", flush=True)
@@ -268,7 +344,8 @@ def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio, distratores=distratores)
+        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio, distratores=distratores,
+                          aumento=aumento, desliga=desliga)
 
     DL.create_single_source_dataset = cria
     DL._balanceado = alfa
@@ -314,9 +391,15 @@ def frases_do_run(run_dir):
 
 
 # ── validação (dentro do treino e no valida_wla.py) ─────────────────────────────────────────────────────────
+# v7 (28/10): frases em inglês, português e espanhol
+_CANECA = ("mug", "cup", "caneca", "xícara", "xicara", "copo", "taza", "tazón")
+_MACA = ("apple", "maçã", "maca", "manzana")
+_COADOR = ("strainer", "coador", "filtro", "dripper", "colador", "cafetera")
+
+
 def objeto(frase):
     f = (frase or "").lower()
-    return "caneca" if ("mug" in f or "cup" in f) else "maca" if "apple" in f else "?"
+    return "caneca" if any(k in f for k in _CANECA) else "maca" if any(k in f for k in _MACA) else "?"
 
 
 def rivais(frases):
@@ -393,6 +476,12 @@ def _orig_frase(frases_fixas):
     return inv
 
 
+def tarefa(frase):
+    """v7: a tarefa (não só o objeto) — o coador separado do pegar caneca."""
+    f = (frase or "").lower()
+    return "coador" if any(k in f for k in _COADOR) else objeto(frase)
+
+
 @torch.no_grad()
 def metricas_validacao(m, lotes, troca_frase=True):
     """erro da mão direita (cm, no trecho e no fim), dedos, fecha no tempo, troca de frase — total e por objeto."""
@@ -401,11 +490,26 @@ def metricas_validacao(m, lotes, troca_frase=True):
     xyz = slice(sx.start, sx.start + 3)
     riv = rivais(sorted({t for b in lotes for t in b["task"]}))
     H = m.action_horizon
-    A = {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha")}
+    A = {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha", "yaw", "estado", "sem_punhos")}
     por = {}
     for i, b in enumerate(lotes):
         torch.manual_seed(1000 + i)
         pred = m.predict_action(examples=b)["normalized_actions"]
+        if i < 6:
+            # v7: o modelo USA o estado? (v4..v6: estado aleatório mudava a ação em só 0,005 — projetor congelado)
+            bs = dict(b)
+            bs["state"] = torch.randn_like(b["state"])
+            torch.manual_seed(1000 + i)
+            A["estado"].append(float(np.abs(m.predict_action(examples=bs)["normalized_actions"] - pred).mean()))
+            # v7: sem as câmeras dos punhos (como no treino com câmeras desligadas): erro da mão direita
+            if "image_mask" in b and any(r in b["image_mask"] for r in PUNHOS):
+                bp = dict(b)
+                bp["image_mask"] = {r: (torch.zeros_like(v) if r in PUNHOS else v) for r, v in b["image_mask"].items()}
+                torch.manual_seed(1000 + i)
+                pp = m.predict_action(examples=bp)["normalized_actions"]
+                al = b["action"].cpu().numpy()[:, -m.action_horizon:, :]
+                es = b["action_norm_scale"].cpu().numpy()[:, None, :]
+                A["sem_punhos"] += (np.linalg.norm((pp - al)[:, :, xyz] * es[:, :, xyz], axis=-1).mean(1) * 100).tolist()
         alvo = b["action"].cpu().numpy()[:, -H:, :]
         esc = b["action_norm_scale"].cpu().numpy()[:, None, :]
         cm = np.linalg.norm((pred - alvo)[:, :, xyz] * esc[:, :, xyz], axis=-1) * 100
@@ -424,7 +528,13 @@ def metricas_validacao(m, lotes, troca_frase=True):
                 v["razao"] = tr[j] / max(cm[j].mean(), 1e-3)
             if (~fa[j][0]) and fa[j].any():
                 v["fecha"] = float(fp[j].any() and abs(int(np.argmax(fp[j])) - int(np.argmax(fa[j]))) <= 9)
-            e = por.setdefault(objeto(t), {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha")})
+            # v7: o YAW da cintura acompanha a demonstração? (trechos em que ela gira > 0,05 rad: giro previsto/real)
+            yw = SLICES["waist_joint"].start
+            gd = (alvo[j, -1, yw] - alvo[j, 0, yw]) * esc[j, 0, yw]
+            if abs(gd) > 0.05:
+                v["yaw"] = ((pred[j, -1, yw] - pred[j, 0, yw]) * esc[j, 0, yw]) / gd
+            e = por.setdefault(tarefa(t), {k: [] for k in ("cm", "cm_fim", "dedos", "lingua", "razao", "fecha",
+                                                            "yaw")})
             for k, x in v.items():
                 A[k].append(float(x))
                 e[k].append(float(x))
@@ -459,13 +569,14 @@ def metricas_validacao(m, lotes, troca_frase=True):
                 A["m_desloca"].append(float(dfim))
     nomes = {"cm": "erro_mao_dir_cm", "cm_fim": "erro_mao_dir_fim_cm", "dedos": "dedos_dir_acerto_%",
              "lingua": "lingua_%", "razao": "lingua_razao", "fecha": "fecha_no_tempo_%",
-             "m_sentido": "marcador_sentido_%", "m_desloca": "marcador_desloca_cm"}
+             "m_sentido": "marcador_sentido_%", "m_desloca": "marcador_desloca_cm", "yaw": "yaw_giro_razao",
+             "estado": "estado_sensibilidade", "sem_punhos": "sem_punhos_erro_cm"}
 
     def resume(D):
         r = {}
         for k, x in D.items():
             if x:
-                val = np.median(x) if k == "razao" else np.mean(x)
+                val = np.median(x) if k in ("razao", "yaw") else np.mean(x)
                 r[nomes[k]] = float(val * (100 if k in ("dedos", "lingua", "fecha", "m_sentido") else 1))
         return r
     r = resume(A)

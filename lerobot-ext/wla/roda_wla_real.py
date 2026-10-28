@@ -387,6 +387,8 @@ def main():
         cabine.tradutor = _traduz
     cabine.publica_estado({"modo": "carregando o WLA-1.0 ..."})
     cam = sw.Camera(a.robo, 5555, cabine, "head_camera" if a.cabeca == "cor" else "head_stereo_left")
+    # 28/10 (v7): o OLHO DIREITO da ZED vai junto; o servidor calcula a profundidade (head_depth) se o modelo usar
+    cam_dir = sw.Camera(a.robo, 5555, cabine, "head_stereo_right") if a.cabeca in ("estereo", "zed") else None
     # Punhos: como no treino (cabeça + punho esq. + punho dir.). Entram só se estiverem chegando.
     punhos = {} if a.sem_punhos else {"cam_left_wrist": sw.Camera(a.robo, 5555, cabine, "wrist_left"),
                                       "cam_right_wrist": sw.Camera(a.robo, 5555, cabine, "wrist_right")}
@@ -635,6 +637,8 @@ def main():
                 # unitree_sdk2_socket) — os modelos treinados com eles nunca viram outro valor de dedo no estado.
                 obs[f"observation.state.{l}_fig6d"] = (np.zeros(6, np.float32) if a.dedos_estado == "zero"
                                                        else dex3_para_fig6d(maos.q.get(l, np.zeros(7)), l))
+        if cam_dir is not None and cam_dir.rgb is not None and abs(cam_dir.t - cam.t) < 0.1:
+            obs["observation.images.head_stereo_right"] = sw.cv2.cvtColor(cam_dir.rgb, sw.cv2.COLOR_RGB2BGR)
         # Os DOIS punhos ou nenhum: o servidor oficial rotula as imagens pela ORDEM
         # (WBC_IMAGE_ROLES[:n]); só o direito seria rotulado como cam_wrist_left.
         if punhos and all(c.rgb is not None and time.time() - c.t < 0.5 for c in punhos.values()):

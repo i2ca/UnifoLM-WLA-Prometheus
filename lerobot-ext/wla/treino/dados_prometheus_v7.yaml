@@ -1,0 +1,68 @@
+# 28/10 V7: só datasets com os DEDOS MEDIDOS no estado (os de 01/10 gravaram a Dex3 = 0: saem Copo_Branco,
+# Copo_No_Coador antigo e Maca_X_Preto). Prometheus_G1_Dex3_V7/ = links para:
+#   G1_Dex3_Cafe_Caneca_No_Coador   30 eps  8,8 min  caneca na mão -> embaixo do coador (com giro do yaw)
+#   G1_Dex3_Pegar_Caneca_Mesa_Nova  55 eps 11,9 min  pegar a caneca (mesa com caneca E maçã)
+#   G1_Dex3_Pegar_Maca_Mesa_Nova    52 eps 13,9 min  pegar a maçã (MESMA mesa) -> a única dupla "mesma cena,
+#                                                    frase decide" que temos: é o que ensina o texto. CONFIRMAR se fica.
+target_fps: 30
+chunk_size: 30
+image_size: [336, 448]
+norm_type: "minmax_q"
+rel_norm_type: "zscore"
+state_norm_type: "minmax_q"
+gripper_norm_type: "minmax_q"
+data_base: "/home/mrwlker/unifolm_data"   # TROQUE: pasta com os datasets convertidos na máquina de treino
+cache_dir: "/data/mrwlker/unifolm_cache_v7"
+
+image_roles:
+  - "head_left"
+  - "head_depth"              # [NOVO] profundidade da ZED (vídeo gerado offline)
+  - "cam_wrist_left"
+  - "cam_wrist_right"
+
+datasets:
+  - name: "Prometheus_G1_Dex3"
+    data_path: "Prometheus_G1_Dex3_V7/"   # links: só os 3 com DEDOS MEDIDOS
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"   # as da UNITREE (o base aprendeu com elas): não recalcular
+    image_keys:
+      - key: "observation.images.head_stereo_left"
+        role: "head_left"
+      - key: "observation.images.head_depth"   # [NOVO]
+        role: "head_depth"
+      - key: "observation.images.wrist_left"
+        role: "cam_wrist_left"
+      - key: "observation.images.wrist_right"
+        role: "cam_wrist_right"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3

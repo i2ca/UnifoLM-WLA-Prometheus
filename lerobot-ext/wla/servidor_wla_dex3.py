@@ -62,11 +62,62 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
             for k, v in self._frases.items():
                 print(f"🗣️  frase: {k!r} -> {v!r}", flush=True)
 
+        # 28/10 (v7): PROFUNDIDADE ao vivo + câmeras pelo NOME. O run treinou com head_depth? Então calcula a
+        # profundidade híbrida (Depth Anything + estéreo da ZED) do head_stereo_left + head_stereo_right que o
+        # executor manda. Os papéis seguem a ordem do treino e câmera que não chegou fica de fora (como no treino com
+        # câmeras desligadas) — antes eram rotulados pela ORDEM (WBC_IMAGE_ROLES[:n]).
+        self._prof = None
+        modo = getattr(args, "profundidade", "auto")
+        usa = modo == "sim" or (modo == "auto" and getattr(args, "lora_run", None) and any(
+            "head_depth" in (Path(args.lora_run) / f).read_text() for f in ("config.full.yaml", "config.yaml")
+            if (Path(args.lora_run) / f).exists()))
+        if usa:
+            sys.path.insert(0, str(Path(__file__).resolve().parent / "zed"))
+            from profundidade_hibrida import ProfundidadeHibrida
+            self._prof = ProfundidadeHibrida(dispositivo="cuda")
+            print("🌊 profundidade ao vivo: Depth Anything V2 + estéreo da ZED -> head_depth", flush=True)
+
+    # chave do executor -> papel do treino, na ORDEM do treino (dados_prometheus_v7.yaml: image_roles)
+    PAPEIS = [("observation.images.cam_left_high", "head_left"), ("__profundidade__", "head_depth"),
+              ("observation.images.cam_left_wrist", "cam_wrist_left"),
+              ("observation.images.cam_right_wrist", "cam_wrist_right")]
+
+    def _imagens_por_nome(self, obs):
+        import cv2
+        imgs, papeis = [], []
+        for chave, papel in self.PAPEIS:
+            if chave == "__profundidade__":
+                if self._prof is None or "observation.images.head_stereo_right" not in obs:
+                    continue
+                esq = cv2.cvtColor(srv._last_frame(obs["observation.images.cam_left_high"]), cv2.COLOR_BGR2RGB)
+                dir_ = cv2.cvtColor(srv._last_frame(obs["observation.images.head_stereo_right"]), cv2.COLOR_BGR2RGB)
+                if esq.shape[:2] != (480, 640) or dir_.shape[:2] != (480, 640):
+                    continue   # a profundidade é calculada na grade 640x480 da ZED ("largo")
+                from profundidade_hibrida import colore
+                rgb = colore(self._prof.lote([(esq, dir_)])[0])
+                img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            else:
+                if chave not in obs:
+                    continue
+                img = srv._last_frame(obs[chave])
+            if self._image_size is not None:
+                h, w = self._image_size
+                if img.shape[:2] != (h, w):
+                    img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+            imgs.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            papeis.append(papel)
+        return imgs, papeis
+
     def _build_example(self, obs):
         ex = super()._build_example(obs)
+        e = ex["example"]
+        if self._prof is not None:
+            e["image"], e["image_roles"] = self._imagens_por_nome(obs)
         if self._frases:
-            t = (ex.get("lang") or "").strip()
-            ex["lang"] = self._frases.get(t, t)
+            # 28/10: CORRIGIDO — antes gravava ex["lang"] (o dicionário de fora) e o modelo recebia a frase da cabine
+            # sem trocar ("Pick up the white mug."), não a descritiva do treino
+            t = (e.get("lang") or "").strip()
+            e["lang"] = self._frases.get(t, t)
         return ex
 
     @property
@@ -210,6 +261,8 @@ def main():
     p.add_argument("--debug_save_dir", default=None)
     p.add_argument("--lora_run", default=None, help="pasta do treino LoRA (config.yaml, dataset_statistics.json)")
     p.add_argument("--lora_passo", type=int, default=8000)
+    p.add_argument("--profundidade", choices=["auto", "sim", "nao"], default="auto",
+                   help="head_depth ao vivo (auto = se o run treinou com head_depth); precisa do head_stereo_right")
     a = p.parse_args()
     if a.lora_run:
         instala_carregador_lora(a.lora_run, a.lora_passo)
