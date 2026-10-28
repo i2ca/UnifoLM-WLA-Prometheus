@@ -41,16 +41,15 @@ HABILIDADES = [
     "Pick up the apple and place it on the black X.",
 ]
 # 28/10: palavras que o ER-1 usa na LISTA do que vê -> o objeto conhecido
-OBJETOS_LISTA = {
-    "chaleira elétrica de inox": ["kettle", "teapot"],
-    "coador de café (marrom-claro, no suporte)": ["dripper", "coffee filter", "filter cone", "strainer", "funnel",
-                                                  "pour.over"],
-    "caneca branca": ["mug", "cup"],
-    "pote de café (marrom-escuro)": ["jar", "canister", "container"],
-    "tampa do pote (fora do pote)": ["lid"],
-    "concha de café preta": ["scoop", "spoon", "ladle"],
+OBJETOS_LISTA = {   # SEM cor no nome: a cor quem diz é o ER-1 (28/10: "caneca branca" fazia ele chamar a amarela de branca)
+    "chaleira": ["kettle", "teapot"],
+    "coador de café": ["dripper", "coffee filter", "filter cone", "strainer", "funnel", "pour.over"],
+    "caneca": ["mug", "cup"],
+    "pote de café": ["jar", "canister"],
+    "tampa do pote": ["lid"],
+    "concha de café": ["scoop", "spoon", "ladle"],
     "X preto na mesa": ["x mark", "black x", "cross", r"\bx\b"],
-    "maçã vermelha": ["apple"],
+    "maçã": ["apple"],
 }
 PT = {
     "Pick up the white mug.": "pegar a caneca branca",
@@ -290,10 +289,13 @@ class Orquestrador:
             conversa = "".join(f"Usuário: {u}\nRobô: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
             q = ("Você é o cérebro de um robô humanoide (Unitree G1). A imagem é da câmera da sua cabeça, olhando a mesa "
                  "à sua frente.\n"
-                 f"Objetos CONFIRMADOS na mesa agora (use EXATAMENTE estes nomes em português): "
+                 # 28/10: o que o ER-1 LISTOU (com as cores que ele viu) + os nomes em português, sem cor fixa
+                 f"O que você listou na imagem agora (em inglês): {getattr(self, 'visto_agora', '') or 'nada'}.\n"
+                 f"Objetos conhecidos que estão à vista (nomes em português): "
                  f"{'; '.join(vistos) if vistos else 'nenhum dos conhecidos'}.\n"
-                 f"Objetos que NÃO estão na mesa: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
-                 "Nunca diga que um objeto confirmado não está na mesa. 'Copo' e 'caneca' são a mesma coisa.\n"
+                 f"Objetos conhecidos que NÃO estão à vista: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
+                 "Diga as CORES pelo que você vê na imagem. 'Copo' e 'caneca' são a mesma coisa. Se não houver mesa, "
+                 "diga o que está vendo de verdade.\n"
                  # 27/10: com a lista de tarefas em TODA pergunta ele terminava toda resposta com "consigo pegar a
                  # caneca e colocar embaixo do coador" (e a própria conversa reforçava). Só entra quando perguntam.
                  + (f"As ÚNICAS tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}. "

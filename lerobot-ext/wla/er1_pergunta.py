@@ -193,7 +193,9 @@ def main():
                 img = cams.quadro(nome)
                 if img is None or time.time() - cams.t.get(nome, 0) > 2:
                     return self._manda(b"sem imagem", "text/plain", 404)
-                ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])   # já chega na ordem certa
+                # o servidor de câmeras manda RGB (por isso o --rgb); o JPEG do navegador quer BGR (caneca amarela
+                # saía azul sem a troca)
+                ok, jpg = cv2.imencode(".jpg", img[:, :, ::-1] if a.rgb else img, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 return self._manda(jpg.tobytes(), "image/jpeg")
             if u.path == "/ultima.jpg" and estado["ultima"]:
                 return self._manda(Path(estado["ultima"]).read_bytes(), "image/jpeg")
