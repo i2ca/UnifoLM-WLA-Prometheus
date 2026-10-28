@@ -191,6 +191,18 @@ class Orquestrador:
         except Exception:  # noqa: BLE001
             return texto
 
+    PERGUNTA_TAREFA = re.compile(r"(sabe|consegue|pode|capaz).{0,25}(fazer|pegar|ajudar)|o que (você|vc) faz|"
+                                 r"tarefa|habilidade|ajud", re.IGNORECASE)
+
+    def sem_repeticao(self, r):
+        """Tira as frases da resposta que já apareceram (quase iguais) nas respostas anteriores da conversa."""
+        def norma(f):
+            return re.sub(r"[^a-zà-ú ]", "", f.lower()).strip()
+        ditas = {norma(f) for _, ant in self.historico for f in re.split(r"(?<=[.!?])\s+", ant) if norma(f)}
+        frases = re.split(r"(?<=[.!?])\s+", r)
+        novas = [f for f in frases if norma(f) not in ditas]
+        return " ".join(novas).strip() or frases[0]
+
     def conversa(self, texto):
         if self.COMANDO.match(texto):   # ordem ("coloca o copo no coador"): vira PLANO (nada vai ao robô sem CONFIRMAR)
             print("[sistema] ordem no chat: vira plano (nada vai ao robô sem CONFIRMAR)", flush=True)
@@ -207,13 +219,18 @@ class Orquestrador:
                  f"{'; '.join(vistos) if vistos else 'nenhum dos conhecidos'}.\n"
                  f"Objetos que NÃO estão na mesa: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
                  "Nunca diga que um objeto confirmado não está na mesa. 'Copo' e 'caneca' são a mesma coisa.\n"
-                 f"As ÚNICAS tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}. "
-                 "Não diga que sabe fazer outras.\n"
+                 # 27/10: com a lista de tarefas em TODA pergunta ele terminava toda resposta com "consigo pegar a
+                 # caneca e colocar embaixo do coador" (e a própria conversa reforçava). Só entra quando perguntam.
+                 + (f"As ÚNICAS tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}. "
+                    "Não diga que sabe fazer outras.\n" if self.PERGUNTA_TAREFA.search(texto) else
+                    "Não ofereça tarefas nem diga o que sabe fazer: o usuário não perguntou isso.\n")
                  + (f"Conversa até agora:\n{conversa}" if conversa else "")
-                 + f"Usuário: {texto}\nResponda em português do Brasil, em 1 a 3 frases curtas, como o robô.\nRobô:")
+                 + f"Usuário: {texto}\nResponda SÓ ao que o usuário perguntou, em português do Brasil, em 1 a 3 "
+                   "frases curtas, sem repetir o que já disse antes na conversa.\nRobô:")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             r = self.traduz(r)
             r = re.sub(r"^\s*(rob[oô]|robot|ER-1)\s*:\s*", "", r, flags=re.IGNORECASE).strip()   # tira o rótulo "Robô:"
+            r = self.sem_repeticao(r)
             self.historico.append((texto, r))
             self.historico = self.historico[-20:]
             fala = bool(self.a.fala_respostas)
