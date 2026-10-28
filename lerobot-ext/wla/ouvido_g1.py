@@ -31,6 +31,62 @@ def _sem_acento(t):
     return "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
 
 
+# 28/10: o Whisper em português ouve "Prometheus" como "O meteoro", "Prometeu"... — além do prompt, aceita o que
+# SOA parecido nas 3 primeiras palavras (distância de edição sobre as letras juntas)
+ALVO = "prometheus"
+
+
+def _distancia(a, b):
+    d = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        ant, d[0] = d[0], i
+        for j, cb in enumerate(b, 1):
+            ant, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, ant + (ca != cb))
+    return d[-1]
+
+
+# o que o Whisper já escreveu no lugar de "Prometheus" (log de 28/10), só no COMEÇO da frase
+APELIDOS = re.compile(r"^\W*((o|ô|oi|ei)\s+)?(o\s+)?(meteoro|prometeo|promete\s+os|prometi\s+us|pro\s+meteus|metheus|meteus)\b[\s,.!?:;-]*",
+                      re.IGNORECASE)
+INTERJ = {"o", "oi", "ei", "hey", "ola", "e"}
+
+
+def acha_ativacao(texto):
+    """(início, fim) do "Prometheus" no texto, ou None. 1) o nome (regex); 2) apelidos que o Whisper já escreveu, no
+    começo; 3) o que SOA parecido (distância <= 3) na 1ª palavra (ou na 2ª, depois de "oi"/"ô") — "prometo" no meio
+    da frase não ativa."""
+    t = _sem_acento(texto)
+    m = ATIVA.search(t)
+    if m:
+        return m.start(), m.end()
+    m = APELIDOS.search(t)
+    if m:
+        return m.start(), m.end()
+    pals = list(re.finditer(r"[a-zA-Z]+", t))[:3]
+    ini = 1 if pals and pals[0].group().lower() in INTERJ else 0
+    for j in range(ini, min(ini + 2, len(pals))):   # 1 ou 2 palavras juntas a partir do começo
+        junto = "".join(p.group().lower() for p in pals[ini:j + 1]).replace("h", "")
+        if 7 <= len(junto) <= 12 and min(_distancia(junto, "prometeus"), _distancia(junto, "prometeu")) <= 2:
+            fim = pals[j].end()
+            while fim < len(t) and t[fim] in " ,.!?:;-":
+                fim += 1
+            return pals[0].start(), fim
+    return None
+
+
+# o que o Whisper inventa em cima de ruído (silêncio, ventilador)
+INVENTADAS = {"obrigado", "muito obrigado", "obrigada", "e ai", "tchau", "legendas pela comunidade amara.org",
+              "inscreva-se no canal", "valeu"}
+
+
+def inventada(texto):
+    t = _sem_acento(texto).lower().strip(" .,!?")
+    if t in INVENTADAS or all(p.strip(" .,!?") in INVENTADAS for p in re.split(r"[.!?]", t) if p.strip(" .,!?")):
+        return True
+    pal = t.split()
+    return len(pal) >= 6 and len(set(pal)) <= len(pal) / 3   # "e ai e ai e ai ..." / "que é que é que é"
+
+
 class Ouvido:
     def __init__(self, ao_ouvir, estado=None, ip_local="192.168.123.165", modelo="openai/whisper-large-v3-turbo",
                  janela_s=8.0, max_s=12.0, silencio_s=0.8, gpu_lock=None, log=print):
@@ -45,6 +101,7 @@ class Ouvido:
         self.pacotes = 0
         self.nivel_ruido = 300.0
         self._asr = None
+        self._prompt = None
         threading.Thread(target=self._carrega, daemon=True, name="whisper").start()
         threading.Thread(target=self._laco, daemon=True, name="ouvido").start()
 
@@ -59,8 +116,11 @@ class Ouvido:
         import torch
         from transformers import pipeline
         t0 = time.time()
-        self._asr = pipeline("automatic-speech-recognition", model=self.modelo_nome, torch_dtype=torch.float16,
+        self._asr = pipeline("automatic-speech-recognition", model=self.modelo_nome, dtype=torch.float16,
                              device="cuda:0")
+        # contexto antes da fala: o Whisper passa a preferir a palavra "Prometheus" (em vez de "O meteoro")
+        self._prompt = torch.tensor(self._asr.tokenizer.get_prompt_ids("Prometheus, bom dia. Prometheus, o que você está vendo?"),
+                                    device="cuda:0")
         self.log(f"🎤 Whisper pronto ({self.modelo_nome}, {time.time() - t0:.0f} s)")
 
     # ── áudio ──
@@ -95,7 +155,7 @@ class Ouvido:
             if not self.ligado or time.time() < self._surdo:
                 fala, silencio, falando = [], 0.0, False
                 continue
-            alto = rms > max(3.0 * self.nivel_ruido, 400.0)
+            alto = rms > max(1.8 * self.nivel_ruido, 350.0)   # a voz chega pouco acima do ventilador
             if not falando:
                 self.nivel_ruido = 0.98 * self.nivel_ruido + 0.02 * min(rms, 3 * self.nivel_ruido)
                 fala = (fala + [x])[-20:]   # guarda ~0,6 s antes do início ("Prometheus" se perdia no começo)
@@ -122,18 +182,27 @@ class Ouvido:
             return
         self.estado("entendendo")
         t0 = time.time()
+        pico = float(np.abs(audio).max()) or 1.0
+        audio = audio * min(0.9 / pico, 20.0)   # normaliza o volume (o microfone chega baixo)
+        kw = {"language": "portuguese", "task": "transcribe"}
+        if self._prompt is not None:
+            kw["prompt_ids"] = self._prompt
         with self.gpu_lock:
-            r = self._asr({"raw": audio, "sampling_rate": SR},
-                          generate_kwargs={"language": "portuguese", "task": "transcribe"})
+            r = self._asr({"raw": audio, "sampling_rate": SR}, generate_kwargs=kw)
         texto = (r.get("text") or "").strip()
+        # o Whisper às vezes devolve o próprio prompt junto: tira
+        for pr in ("Prometheus, bom dia. Prometheus, o que você está vendo?",):
+            texto = texto.replace(pr, "").strip()
         ms = (time.time() - t0) * 1000
-        if not texto or len(_sem_acento(texto).strip(" .,!?")) < 2:
+        if not texto or len(_sem_acento(texto).strip(" .,!?")) < 2 or inventada(texto):
+            if texto:
+                self.log(f"🎤 (ruído, ignorado) {texto[:60]}")
             self.estado("parado")
             return
-        m = ATIVA.search(_sem_acento(texto))
+        m = acha_ativacao(texto)
         agora = time.time()
         if m:
-            pergunta = (texto[:m.start()] + " " + texto[m.end():]).strip(" ,.!?;:-")
+            pergunta = (texto[:m[0]] + " " + texto[m[1]:]).strip(" ,.!?;:-")
         elif agora < self._acordado_ate:
             pergunta = texto
         else:
