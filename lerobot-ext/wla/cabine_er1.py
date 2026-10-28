@@ -320,7 +320,7 @@ class Orquestrador:
                     self.diz("orquestrador", f"▶ etapa {i + 1}/{len(self.plano)}: {PT[frase]} "
                                              f"(tentativa {tentativa}) — mandando ao WLA")
                     self.cabine("/tarefa", {"texto": frase})
-                    t0, sims = time.time(), 0
+                    t0, sims, falhas = time.time(), 0, 0
                     while time.time() - t0 < self.a.tempo_max:
                         if self._espera(2.0):
                             return
@@ -330,8 +330,14 @@ class Orquestrador:
                         try:
                             e = json.loads(urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=5).read())
                         except Exception as ex:  # noqa: BLE001
-                            self.diz("sistema", f"cabine do robô não respondeu: {ex}")
+                            falhas += 1
+                            if falhas >= 3:   # 27/10: antes ficava repetindo até o tempo máximo
+                                self.diz("orquestrador", f"🛑 a cabine do robô caiu ({ex}): objetivo cancelado, "
+                                                         "não mando mais nada")
+                                self.fala("A cabine do robô caiu. Parei.", "plano")
+                                return
                             continue
+                        falhas = 0
                         if self.seq_enviado is not None and int(e.get("tarefa_seq", 0)) < self.seq_enviado:
                             self.diz("orquestrador", "🛑 a cabine do robô foi REINICIADA: objetivo cancelado, não mando "
                                                      "mais nada")
