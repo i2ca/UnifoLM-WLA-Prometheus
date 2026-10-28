@@ -119,7 +119,13 @@ class Orquestrador:
         return self.seq_enviado is not None and int(e.get("tarefa_seq", 0)) < self.seq_enviado
 
     # ── voz do robô ──
+    # 28/10: como se FALA no Brasil (o Piper soletrava as siglas); só na voz — na tela continua a sigla
+    PRONUNCIA = [(re.compile(r"\bUFES\b", re.IGNORECASE), "Ufes"), (re.compile(r"\bLCAD\b", re.IGNORECASE), "éle cádi"),
+                 (re.compile(r"\bER-1\b"), "é érre um"), (re.compile(r"\bWLA\b"), "dáblio éle á")]
+
     def _pcm(self, texto):
+        for padrao, fala in self.PRONUNCIA:
+            texto = padrao.sub(fala, texto)
         """Voz Piper em português (pt_BR-faber, gerada aqui na PGX) -> PCM 16 kHz mono. A voz interna do G1 só fala
         inglês/chinês; o painel do robô toca o PCM pelo mesmo caminho do alarme de pânico."""
         import subprocess
@@ -242,6 +248,8 @@ class Orquestrador:
                 listas.append(r.lower())
             except Exception:  # noqa: BLE001
                 pass
+        # sem repetição ("black wire, black wire, ..." enchia o prompt)
+        listas = [", ".join(dict.fromkeys(i.strip() for i in l.split(",") if i.strip())) for l in listas]
         texto = " | ".join(listas)
         vistos, ausentes = [], []
         for nome, chaves in OBJETOS_LISTA.items():
@@ -290,6 +298,8 @@ class Orquestrador:
             conversa = "".join(f"Usuário: {u}\nRobô: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
             q = ("Você é o Prometheus, um robô humanoide (Unitree G1) desenvolvido pela equipe do LCAD — Laboratório de "
                  "Computação de Alto Desempenho da UFES. Só fale disso se perguntarem quem você é ou quem te fez. "
+                 "Fale SEMPRE em primeira pessoa, como o próprio robô (\"eu fui desenvolvido\", nunca \"o robô "
+                 "Prometheus foi\"). "
                  "A imagem é da câmera da sua cabeça.\n"
                  # 28/10: o que o ER-1 LISTOU (com as cores que ele viu) + os nomes em português, sem cor fixa
                  f"O que você listou na imagem agora (em inglês): {getattr(self, 'visto_agora', '') or 'nada'}.\n"

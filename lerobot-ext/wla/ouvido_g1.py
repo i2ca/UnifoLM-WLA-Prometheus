@@ -222,6 +222,9 @@ class Ouvido:
         with self.gpu_lock:
             r = self._asr({"raw": audio, "sampling_rate": SR}, generate_kwargs=kw)
         texto = (r.get("text") or "").strip()
+        # 28/10: siglas que o Whisper escreve do jeito que ouve
+        texto = re.sub(r"\b(L[- ]?Card|L[- ]?Cad|Elcad|Éle ?cad[ei]?)\b", "LCAD", texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\b(U ?fes|Ufez)\b", "UFES", texto, flags=re.IGNORECASE)
         # o Whisper às vezes devolve o próprio prompt ("Prometheus.") quando só tem ruído: isso NÃO é ativação
         if _sem_acento(texto).lower().strip(" .,!?") in ("prometheus", ""):
             self.log("🎤 (só o nome do prompt, ignorado)")
