@@ -272,6 +272,8 @@ class Orquestrador:
         except Exception:  # noqa: BLE001
             return texto
 
+    VISAO = re.compile(r"vend|\bv[eê]\b|v[eê]s\b|olh|mesa|objeto|\bcor\b|cores|\btem\b|m[aã]o|frente|onde|qual|"
+                       r"caneca|copo|ma[çc][aã]|coador|chaleira|pote|isso|aquilo|segur|enxerg|cena|c[aâ]mera", re.IGNORECASE)
     PERGUNTA_TAREFA = re.compile(r"(sabe|consegue|pode|capaz).{0,25}(fazer|pegar|ajudar)|o que (você|vc) faz|"
                                  r"tarefa|habilidade|ajud", re.IGNORECASE)
 
@@ -292,37 +294,32 @@ class Orquestrador:
             return self.objetivo(texto)
         self.diz("você", texto)
         try:
-            # 27/10: com a pergunta ANTES das instruções o ER-1 só repetia a pergunta; e sem a lista ele trocava nomes
-            # ("copo de vidro" = coador, "xícara" = pote). Agora: papel -> objetos que podem estar na mesa -> pergunta.
-            vistos, ausentes = self.objetos_presentes()
-            conversa = "".join(f"Usuário: {u}\nRobô: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
-            q = ("Você é o Prometheus, um robô humanoide (Unitree G1) desenvolvido pela equipe do LCAD — Laboratório de "
-                 "Computação de Alto Desempenho da UFES. Só fale disso se perguntarem quem você é ou quem te fez. "
-                 "Fale SEMPRE em primeira pessoa, como o próprio robô (\"eu fui desenvolvido\", nunca \"o robô "
-                 "Prometheus foi\"). "
-                 "A imagem é da câmera da sua cabeça.\n"
-                 # 28/10: o que o ER-1 LISTOU (com as cores que ele viu) + os nomes em português, sem cor fixa
-                 f"O que você listou na imagem agora (em inglês): {getattr(self, 'visto_agora', '') or 'nada'}.\n"
-                 f"Objetos conhecidos que estão à vista (nomes em português): "
-                 f"{'; '.join(vistos) if vistos else 'nenhum dos conhecidos'}.\n"
-                 f"Objetos conhecidos que NÃO estão à vista: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
-                 "As CORES são as da lista acima (o que você vê AGORA); elas valem mais que qualquer cor dita antes na "
-                 "conversa. 'Copo' e 'caneca' são a mesma coisa. Se não houver mesa, "
-                 "diga o que está vendo de verdade.\n"
-                 # 28/10: "bom dia" virava descrição da imagem
-                 "Responda ao que foi dito: a um cumprimento, cumprimente de volta, sem descrever a imagem; descreva o "
-                 "que vê só quando perguntarem sobre a cena ou os objetos.\n"
-                 # 27/10: com a lista de tarefas em TODA pergunta ele terminava toda resposta com "consigo pegar a
-                 # caneca e colocar embaixo do coador" (e a própria conversa reforçava). Só entra quando perguntam.
-                 + (f"As ÚNICAS tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}. "
-                    "Não diga que sabe fazer outras.\n" if self.PERGUNTA_TAREFA.search(texto) else
-                    "Não ofereça tarefas nem diga o que sabe fazer: o usuário não perguntou isso.\n")
-                 + (f"Conversa até agora:\n{conversa}" if conversa else "")
-                 + f"Usuário: {texto}\nResponda SÓ ao que o usuário perguntou, em português do Brasil, em 1 a 3 "
-                   "frases curtas, sem repetir o que já disse antes na conversa.\nRobô:")
+            # 28/10: prompt CURTO com EXEMPLOS (o ER-1 é pequeno: com listas e regras longas ele respondia "Bom dia!"
+            # a "Boa tarde" e não descrevia a cena). A cena só entra quando a pergunta é sobre ela.
+            cena = ""
+            if self.VISAO.search(texto):
+                vistos, _ = self.objetos_presentes()
+                cena = (f"Agora a câmera da sua cabeça mostra (lista em inglês, com as cores): "
+                        f"{getattr(self, 'visto_agora', '') or 'nada reconhecível'}. Fale só desses objetos e dessas "
+                        "cores; não invente outros.\n")
+            tarefas = (f"As únicas tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}.\n"
+                       if self.PERGUNTA_TAREFA.search(texto) else "")
+            conversa = "".join(f"Usuário: {u}\nPrometheus: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
+            q = ("Você é o Prometheus, um robô humanoide criado pela equipe do LCAD (Laboratório de Computação de Alto "
+                 "Desempenho) da UFES. Você fala português do Brasil, sempre em primeira pessoa, com frases curtas e "
+                 "simpáticas, e responde exatamente ao que perguntaram.\n" + cena + tarefas +
+                 "Exemplos de conversa:\n"
+                 "Usuário: Boa tarde!\nPrometheus: Boa tarde! Tudo bem com você?\n"
+                 "Usuário: Quem é você?\nPrometheus: Eu sou o Prometheus, um robô humanoide criado pela equipe do "
+                 "LCAD, da UFES.\n"
+                 "Usuário: O que você está vendo?\nPrometheus: Estou vendo um monitor preto e uma cadeira na minha "
+                 "frente.\n"
+                 "Usuário: Obrigado!\nPrometheus: De nada! Precisando, é só chamar.\n\n"
+                 + conversa + f"Usuário: {texto}\nPrometheus:")
             r, ms = self.er1(q, max_tok=self.a.max_tokens)
             r = self.traduz(r)
-            r = re.sub(r"^\s*(rob[oô]|robot|ER-1)\s*:\s*", "", r, flags=re.IGNORECASE).strip()   # tira o rótulo "Robô:"
+            r = re.sub(r"^\s*(rob[oô]|robot|ER-1|prometheus)\s*:\s*", "", r, flags=re.IGNORECASE).strip()   # tira o rótulo
+            r = re.split(r"\n\s*(Usuário|Prometheus)\s*:", r)[0].strip()   # ele às vezes continua a conversa sozinho
             r = self.sem_repeticao(r)
             self.historico.append((texto, r))
             self.historico = self.historico[-20:]
