@@ -119,8 +119,8 @@ class Ouvido:
         self._asr = pipeline("automatic-speech-recognition", model=self.modelo_nome, dtype=torch.float16,
                              device="cuda:0")
         # contexto antes da fala: o Whisper passa a preferir a palavra "Prometheus" (em vez de "O meteoro")
-        self._prompt = torch.tensor(self._asr.tokenizer.get_prompt_ids("Prometheus, bom dia. Prometheus, o que você está vendo?"),
-                                    device="cuda:0")
+        # 28/10: SÓ o nome — com frases de exemplo no prompt, o Whisper repetia as frases em cima do ruído
+        self._prompt = torch.tensor(self._asr.tokenizer.get_prompt_ids("Prometheus."), device="cuda:0")
         self.log(f"🎤 Whisper pronto ({self.modelo_nome}, {time.time() - t0:.0f} s)")
 
     # ── áudio ──
@@ -142,7 +142,7 @@ class Ouvido:
                 time.sleep(3)
 
     def _escuta(self, s):
-        fala, silencio, falando = [], 0.0, False
+        fala, silencio, falando, forte = [], 0.0, False, 0.0
         while True:
             try:
                 d, _ = s.recvfrom(65536)
@@ -160,17 +160,20 @@ class Ouvido:
                 self.nivel_ruido = 0.98 * self.nivel_ruido + 0.02 * min(rms, 3 * self.nivel_ruido)
                 fala = (fala + [x])[-20:]   # guarda ~0,6 s antes do início ("Prometheus" se perdia no começo)
                 if alto:
-                    falando, silencio = True, 0.0
+                    falando, silencio, forte = True, 0.0, 0.0
                     self.estado("ouvindo")
                 continue
             fala.append(x)
+            if rms > 2.5 * self.nivel_ruido:
+                forte += dur
             silencio = 0.0 if alto else silencio + dur
             total = sum(len(f) for f in fala) / SR
             if silencio >= self.silencio_s or total >= self.max_s:
                 falando = False
                 audio = np.concatenate(fala).astype(np.float32) / 32768.0
                 fala = []
-                if total - silencio >= 0.35:   # muito curto = estalo
+                # voz de VERDADE: >= 0,3 s bem acima do ventilador (ruído virava "frase" no Whisper)
+                if total - silencio >= 0.35 and forte >= 0.3:
                     threading.Thread(target=self._entende, args=(audio,), daemon=True).start()
                 else:
                     self.estado("parado")
@@ -190,9 +193,11 @@ class Ouvido:
         with self.gpu_lock:
             r = self._asr({"raw": audio, "sampling_rate": SR}, generate_kwargs=kw)
         texto = (r.get("text") or "").strip()
-        # o Whisper às vezes devolve o próprio prompt junto: tira
-        for pr in ("Prometheus, bom dia. Prometheus, o que você está vendo?",):
-            texto = texto.replace(pr, "").strip()
+        # o Whisper às vezes devolve o próprio prompt ("Prometheus.") quando só tem ruído: isso NÃO é ativação
+        if _sem_acento(texto).lower().strip(" .,!?") in ("prometheus", ""):
+            self.log("🎤 (só o nome do prompt, ignorado)")
+            self.estado("parado")
+            return
         ms = (time.time() - t0) * 1000
         if not texto or len(_sem_acento(texto).strip(" .,!?")) < 2 or inventada(texto):
             if texto:
