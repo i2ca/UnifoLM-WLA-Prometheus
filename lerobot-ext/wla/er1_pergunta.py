@@ -193,7 +193,7 @@ def main():
                 img = cams.quadro(nome)
                 if img is None or time.time() - cams.t.get(nome, 0) > 2:
                     return self._manda(b"sem imagem", "text/plain", 404)
-                ok, jpg = cv2.imencode(".jpg", img[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 75])   # chega em RGB
+                ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])   # já chega na ordem certa
                 return self._manda(jpg.tobytes(), "image/jpeg")
             if u.path == "/ultima.jpg" and estado["ultima"]:
                 return self._manda(Path(estado["ultima"]).read_bytes(), "image/jpeg")

@@ -40,18 +40,17 @@ HABILIDADES = [
     "Pick up the apple.",
     "Pick up the apple and place it on the black X.",
 ]
-# a mesa do café (objetos_cafe/objetos.json): o ER-1 CONFIRMA um a um (sim/não) antes de responder — com a lista
-# inteira no texto ele citava tudo, até a maçã que não estava na mesa (27/10)
-OBJETOS_MESA = {   # nome em português (o que o ER-1 deve usar) -> perguntas sim/não (qualquer "sim" vale)
-    "chaleira elétrica de inox": ["Is there an electric kettle on the table?", "Is there a kettle on the table?"],
-    "coador de café (marrom-claro, no suporte)": ["Is there a light brown coffee dripper (coffee strainer) on the table?",
-                                                  "Is there a coffee filter cone on a stand?"],
-    "caneca branca": ["Is there a white mug on the table?"],
-    "pote de café (marrom-escuro)": ["Is there a dark brown coffee jar on the table?"],
-    "tampa do pote (fora do pote)": ["Is there a round dark brown lid lying on the table, separate from the jar?"],
-    "concha de café preta": ["Is there a small black coffee scoop on the table?"],
-    "X preto na mesa": ["Is there a black X mark on the table?"],
-    "maçã vermelha": ["Is there a red apple on the table?"],
+# 28/10: palavras que o ER-1 usa na LISTA do que vê -> o objeto conhecido
+OBJETOS_LISTA = {
+    "chaleira elétrica de inox": ["kettle", "teapot"],
+    "coador de café (marrom-claro, no suporte)": ["dripper", "coffee filter", "filter cone", "strainer", "funnel",
+                                                  "pour.over"],
+    "caneca branca": ["mug", "cup"],
+    "pote de café (marrom-escuro)": ["jar", "canister", "container"],
+    "tampa do pote (fora do pote)": ["lid"],
+    "concha de café preta": ["scoop", "spoon", "ladle"],
+    "X preto na mesa": ["x mark", "black x", "cross", r"\bx\b"],
+    "maçã vermelha": ["apple"],
 }
 PT = {
     "Pick up the white mug.": "pegar a caneca branca",
@@ -231,20 +230,22 @@ class Orquestrador:
         return None
 
     def objetos_presentes(self):
-        """Pergunta sim/não (ER-1 original) para cada objeto conhecido; devolve (vistos, ausentes) em português."""
+        """28/10: o ER-1 LISTA o que vê (texto livre) e a cabine procura os objetos conhecidos na lista. A pergunta
+        sim/não ("Is there a kettle on the table?") respondia SIM até olhando para o chão vazio."""
+        listas = []
+        for q in ("List every object you can see in the image, comma separated. Do not guess.",
+                  "List the objects on the table, comma separated. If there is no table, say: no table."):
+            try:
+                r, _ = self.er1(q, max_tok=80, lora=0, timeout=30)
+                listas.append(r.lower())
+            except Exception:  # noqa: BLE001
+                pass
+        texto = " | ".join(listas)
         vistos, ausentes = [], []
-        for nome, qs in OBJETOS_MESA.items():
-            sim = False
-            for q in qs:
-                try:
-                    r, _ = self.er1(q + " Answer only yes or no.", max_tok=3, lora=0, timeout=20)
-                    if r.lower().startswith("yes"):
-                        sim = True
-                        break
-                except Exception:  # noqa: BLE001
-                    pass
-            (vistos if sim else ausentes).append(nome)
-        print("[ER-1] confirmei na mesa: " + (", ".join(vistos) or "nada da lista"), flush=True)
+        for nome, chaves in OBJETOS_LISTA.items():
+            (vistos if any(re.search(rf"\b{c}", texto) for c in chaves) else ausentes).append(nome)
+        print(f"[ER-1] vê: {texto} -> confirmei: " + (", ".join(vistos) or "nada da lista"), flush=True)
+        self.visto_agora = texto
         return vistos, ausentes
 
     # ── conversa ──
