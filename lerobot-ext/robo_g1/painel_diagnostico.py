@@ -393,6 +393,20 @@ ENDIREITA_CINTURA_S = 0.0   # s de integrador na cintura antes de travar a ponte
 
 
 # ── fala: o executor do WLA manda PCM (16 kHz, mono, s16le) e o alto-falante do G1 toca ──────
+def panico_de_verdade():
+    """28/10: a ponte sobe em pânico até o rearme ("início: rearme pendente"). Esse BLOQUEIO DA PARTIDA (botão OK)
+    não é alarme: a voz e a luz da conversa podem funcionar. Pânico de verdade = botão apertado, falha ou disparo."""
+    pan, _ = D.pega("panico")
+    if pan is None or not pan.get("panico"):
+        return False
+    return not (pan.get("botao_ok") and str(pan.get("motivo", "")).startswith("início"))
+
+
+def bloqueio_da_partida():
+    pan, _ = D.pega("panico")
+    return pan is not None and pan.get("panico") and not panico_de_verdade()
+
+
 class Voz:
     """POST /fala com o áudio cru. Toca pelo AudioClient (o mesmo do alerta de pânico da ponte), numa
     thread com fila de 3: fala velha é descartada. Com a ponte em pânico, não fala (o alarme é dela)."""
@@ -446,10 +460,12 @@ class Voz:
             time.sleep(60)
 
     def led(self, r, g, b):
-        """28/10: luz do rosto (voice API 1010). Com a ponte em pânico a luz é dela (vermelho/laranja): recusa."""
-        pan, _ = D.pega("panico")
-        if pan is not None and pan.get("panico"):
+        """28/10: luz do rosto (voice API 1010). Pânico de verdade: a luz é da ponte (recusa). Bloqueio da partida:
+        muda, mas "apagada" vira o amarelo do rearme pendente."""
+        if panico_de_verdade():
             return False, "ponte em pânico: a luz mostra a trava"
+        if bloqueio_da_partida() and (r, g, b) == (0, 0, 0):
+            r, g, b = 255, 140, 0   # "apagada" = o AMARELO do rearme pendente (o aviso não some)
         with self.trava:
             code = self._cli().LedControl(int(r), int(g), int(b))
         self.led_atual = (int(r), int(g), int(b))
@@ -465,8 +481,7 @@ class Voz:
     def _laco(self):
         while True:
             pcm, texto = self.fila.get()
-            pan, _ = D.pega("panico")
-            if pan is not None and pan.get("panico") and "pânico" not in texto.lower():
+            if panico_de_verdade() and "pânico" not in texto.lower():   # o bloqueio da partida não cala a voz
                 continue
             try:
                 with self.trava:
