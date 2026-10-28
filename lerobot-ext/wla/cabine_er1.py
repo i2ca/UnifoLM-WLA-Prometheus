@@ -234,7 +234,8 @@ class Orquestrador:
         """28/10: o ER-1 LISTA o que vê (texto livre) e a cabine procura os objetos conhecidos na lista. A pergunta
         sim/não ("Is there a kettle on the table?") respondia SIM até olhando para o chão vazio."""
         listas = []
-        for q in ("List every object you can see in the image, comma separated. Do not guess.",
+        for q in ("List every object you can see in the image WITH ITS COLOR, comma separated (e.g. 'yellow cup'). "
+                  "Do not guess.",
                   "List the objects on the table, comma separated. If there is no table, say: no table."):
             try:
                 r, _ = self.er1(q, max_tok=80, lora=0, timeout=30)
@@ -287,14 +288,16 @@ class Orquestrador:
             # ("copo de vidro" = coador, "xícara" = pote). Agora: papel -> objetos que podem estar na mesa -> pergunta.
             vistos, ausentes = self.objetos_presentes()
             conversa = "".join(f"Usuário: {u}\nRobô: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
-            q = ("Você é o cérebro de um robô humanoide (Unitree G1). A imagem é da câmera da sua cabeça, olhando a mesa "
-                 "à sua frente.\n"
+            q = ("Você é o Prometheus, um robô humanoide (Unitree G1) desenvolvido pela equipe do LCAD — Laboratório de "
+                 "Computação de Alto Desempenho da UFES. Só fale disso se perguntarem quem você é ou quem te fez. "
+                 "A imagem é da câmera da sua cabeça.\n"
                  # 28/10: o que o ER-1 LISTOU (com as cores que ele viu) + os nomes em português, sem cor fixa
                  f"O que você listou na imagem agora (em inglês): {getattr(self, 'visto_agora', '') or 'nada'}.\n"
                  f"Objetos conhecidos que estão à vista (nomes em português): "
                  f"{'; '.join(vistos) if vistos else 'nenhum dos conhecidos'}.\n"
                  f"Objetos conhecidos que NÃO estão à vista: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
-                 "Diga as CORES pelo que você vê na imagem. 'Copo' e 'caneca' são a mesma coisa. Se não houver mesa, "
+                 "As CORES são as da lista acima (o que você vê AGORA); elas valem mais que qualquer cor dita antes na "
+                 "conversa. 'Copo' e 'caneca' são a mesma coisa. Se não houver mesa, "
                  "diga o que está vendo de verdade.\n"
                  # 28/10: "bom dia" virava descrição da imagem
                  "Responda ao que foi dito: a um cumprimento, cumprimente de volta, sem descrever a imagem; descreva o "
