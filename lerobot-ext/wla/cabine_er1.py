@@ -296,6 +296,9 @@ class Orquestrador:
                  f"Objetos conhecidos que NÃO estão à vista: {'; '.join(ausentes) if ausentes else 'nenhum'}.\n"
                  "Diga as CORES pelo que você vê na imagem. 'Copo' e 'caneca' são a mesma coisa. Se não houver mesa, "
                  "diga o que está vendo de verdade.\n"
+                 # 28/10: "bom dia" virava descrição da imagem
+                 "Responda ao que foi dito: a um cumprimento, cumprimente de volta, sem descrever a imagem; descreva o "
+                 "que vê só quando perguntarem sobre a cena ou os objetos.\n"
                  # 27/10: com a lista de tarefas em TODA pergunta ele terminava toda resposta com "consigo pegar a
                  # caneca e colocar embaixo do coador" (e a própria conversa reforçava). Só entra quando perguntam.
                  + (f"As ÚNICAS tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}. "
