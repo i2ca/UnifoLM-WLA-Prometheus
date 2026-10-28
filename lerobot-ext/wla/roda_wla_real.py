@@ -607,7 +607,8 @@ def main():
     arq = open(a.log, "w", newline="")
     log = csv.writer(arq)
     log.writerow(["t", "consulta", "ms", "lado", "ee_medido", "ee_comandado", "ee_modelo_fim", "ee_alvo_fim",
-                  "erro_ik_mm", "juntas_cortadas_pela_caixa", "q_comandado", "q_medido", "passo_inicial"])
+                  "erro_ik_mm", "juntas_cortadas_pela_caixa", "q_comandado", "q_medido", "passo_inicial",
+                  "yaw_pedido", "yaw_medido", "mao_fecha_0a1", "tarefa"])   # 28/10: + tronco, mão e tarefa
 
     # ── consulta à rede EM PARALELO com o movimento ──
     # A rede leva ~0,67 s. Antes o braço ficava parado esperando cada resposta. Agora uma thread
@@ -1247,7 +1248,8 @@ def _registra(tr, st, log, t_ini, alvo, qm, cabine, a, est, partida, fech_mao, u
                       np.round(base[l][1], 4).tolist(), np.round(fins[l][0], 4).tolist(),
                       np.round(fins[l][1], 4).tolist(), round(st["erros"][l] * 1000, 1), st["cortes"][l],
                       [round(alvo[i], 3) for i in BRACO[l]], [round(float(qm[i]), 3) for i in BRACO[l]],
-                      st["passo_inicial"]])
+                      st["passo_inicial"], round(st["yaw"], 3) if "yaw" in st else "", round(float(qm[12]), 3),
+                      round(fech_mao[l], 2) if fech_mao.get(l) is not None else "", tr["frase"]])
     if tr["n"] % 5 == 1:
         print(f"   consulta {tr['n']:3d} | {tr['ms']:4.0f} ms | passos {st['passo_inicial']}..+{usados} | modelo Δ dir "
               f"{info['delta_pedido_pelo_modelo_cm'].get('right')} cm esq {info['delta_pedido_pelo_modelo_cm'].get('left')}"
