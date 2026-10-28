@@ -98,7 +98,7 @@ class Ouvido:
             alto = rms > max(3.0 * self.nivel_ruido, 400.0)
             if not falando:
                 self.nivel_ruido = 0.98 * self.nivel_ruido + 0.02 * min(rms, 3 * self.nivel_ruido)
-                fala = (fala + [x])[-8:]   # guarda ~0,25 s antes do início (o começo da palavra)
+                fala = (fala + [x])[-20:]   # guarda ~0,6 s antes do início ("Prometheus" se perdia no começo)
                 if alto:
                     falando, silencio = True, 0.0
                     self.estado("ouvindo")

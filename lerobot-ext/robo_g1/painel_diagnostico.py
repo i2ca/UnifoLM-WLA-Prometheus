@@ -425,11 +425,17 @@ class Voz:
     def _mantem_mic(self):
         """28/10: MICROFONE do G1 ligado (voice API 1008 {"mode": 1}): o arranjo de 4 microfones manda PCM 16 kHz
         mono por multicast UDP 239.168.123.161:5555 (a PGX escuta e reconhece a fala). Sem isso o microfone fica
-        mudo. Repete a cada 60 s (se o app da Unitree mudar o modo, volta)."""
+        mudo. Confere a cada 60 s (API 1007) e só religa se o app da Unitree tiver mudado o modo."""
         while True:
             try:
                 with self.trava:
-                    code, _ = self._cli()._Call(1008, json.dumps({"mode": 1}))
+                    cli = self._cli()
+                    cli._RegistApi(1007, 0)
+                    # SÓ liga se não estiver ligado: cada 1008 faz o assistente da Unitree anunciar "Wake up mode" e
+                    # acender a luz azul (28/10: religava a cada 60 s)
+                    c7, d7 = cli._Call(1007, json.dumps({}))
+                    ja = c7 == 0 and json.loads(d7 or "{}").get("mode") == 1
+                    code = 0 if ja else cli._Call(1008, json.dumps({"mode": 1}))[0]
                 if self.mic != code:
                     print(f"[diagnóstico] 🎤 microfone {'LIGADO (multicast 239.168.123.161:5555)' if code == 0 else f'falhou: código {code}'}",
                           flush=True)

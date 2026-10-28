@@ -196,6 +196,18 @@ class Orquestrador:
         except Exception as e:  # noqa: BLE001
             self.diz("sistema", f"o robô não conseguiu falar ({e}): {texto}")
 
+    def wla_online(self):
+        """A cabine do robô (executor do WLA, sobe_cabine_wla.sh) está no ar? Guarda 3 s (a página pergunta muito)."""
+        agora = time.time()
+        if agora - getattr(self, "_wla_t", 0) > 3:
+            try:
+                urllib.request.urlopen(f"{self.a.cabine}/estado.json", timeout=1).read()
+                self._wla = True
+            except Exception:  # noqa: BLE001
+                self._wla = False
+            self._wla_t = agora
+        return self._wla
+
     # ── travas ──
     def libera(self, sim):
         self.liberado, self.liberado_t = bool(sim), time.time()
@@ -533,8 +545,9 @@ button.conf{background:#d98e04}button:disabled{opacity:.35;cursor:not-allowed}
 <label class="chave">luz do rosto <input type="color" id="cor" value="#000000" style="width:42px;height:28px"></label>
 <span id="ouviu" class="t"></span></div></section></main>
 <script>
-const CAB = "__CABINE__";
-document.getElementById("cam").src = CAB + "/camera/head_stereo_left.mjpg";
+// 28/10: a câmera vem do servidor do ER-1 (funciona logo depois do init, sem o executor do WLA)
+setInterval(() => { const i = new Image(); i.onload = () => { document.getElementById("cam").src = i.src; };
+  i.src = "/cam.jpg?t=" + Date.now(); }, 250);
 let n = 0;
 async function post(c, b){ await fetch(c, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(b||{})}); }
 document.getElementById("f").onsubmit = e => { e.preventDefault(); const t = txt.value.trim(); if(t){ post("/conversa",{texto:t}); txt.value=""; } };
@@ -549,7 +562,8 @@ document.getElementById("cor").onchange = e => post("/led", {cor: e.target.value
 async function atualiza(){
   try{
     const e = await (await fetch("/estado")).json();
-    document.getElementById("estado").textContent = e.rodando ? `executando etapa ${e.passo+1}/${e.plano.length}` : "parado";
+    document.getElementById("estado").textContent = (e.rodando ? `executando etapa ${e.passo+1}/${e.plano.length}` : "parado") +
+      (e.wla ? " · WLA online" : " · WLA OFFLINE (conversa e voz funcionam; executar precisa do sobe_cabine_wla.sh)");
     document.getElementById("lib").checked = e.liberado;
     document.getElementById("conf").disabled = !(e.pendente && e.liberado && (!e.rodando || e.retry));
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
@@ -615,10 +629,24 @@ def main():
                 return self._json({"msgs": msgs, "rodando": o.rodando, "passo": o.passo,
                                    "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES],
                                    "pendente": pend, "liberado": o.esta_liberado(), "retry": o.retry is not None,
+                                   "wla": o.wla_online(),
                                    "ouvido": None if o.ouvido is None else {
                                        "ligado": o.ouvido.ligado, "pronto": o.ouvido.pronto(), "pacotes": o.ouvido.pacotes,
                                        "ultimo": ("✅ " if o.ouvido.ultimo["ativou"] else "· ") + o.ouvido.ultimo["texto"]
                                        if o.ouvido.ultimo["texto"] else ""}})
+            if self.path.startswith("/cam.jpg"):
+                try:
+                    b = urllib.request.urlopen(f"{a.er1}/camera/head_stereo_left.jpg", timeout=2).read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(b)))
+                    self.end_headers()
+                    self.wfile.write(b)
+                except Exception:  # noqa: BLE001
+                    self.send_response(404)
+                    self.end_headers()
+                return
             host = (self.headers.get("Host") or "localhost").split(":")[0]
             cab = a.cabine_navegador or f"http://{host}:8090"
             b = PAGINA.replace("__CABINE__", cab).encode()
