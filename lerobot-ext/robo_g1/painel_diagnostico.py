@@ -397,14 +397,57 @@ class Voz:
     """POST /fala com o áudio cru. Toca pelo AudioClient (o mesmo do alerta de pânico da ponte), numa
     thread com fila de 3: fala velha é descartada. Com a ponte em pânico, não fala (o alarme é dela)."""
 
-    def __init__(self, volume=100):
+    def __init__(self, volume=100, microfone=True):
         import queue
         self.queue = queue
         self.fila = queue.Queue(maxsize=3)
         self.volume = volume
         self.cliente = None
         self.ultima = ""
+        self.trava = threading.Lock()   # o cliente RPC é usado pela fala, pelo LED e pelo microfone
+        self.mic = None                 # 28/10: resultado da última ativação do microfone
+        self.led_atual = None
         threading.Thread(target=self._laco, daemon=True, name="voz").start()
+        if microfone:
+            threading.Thread(target=self._mantem_mic, daemon=True, name="microfone").start()
+
+    def _cli(self):
+        if self.cliente is None:
+            from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
+            c = AudioClient()
+            c.SetTimeout(3.0)
+            c.Init()
+            c._RegistApi(1008, 0)   # modo do serviço de voz (não está no AudioClient do SDK)
+            c.SetVolume(self.volume)
+            self.cliente = c
+        return self.cliente
+
+    def _mantem_mic(self):
+        """28/10: MICROFONE do G1 ligado (voice API 1008 {"mode": 1}): o arranjo de 4 microfones manda PCM 16 kHz
+        mono por multicast UDP 239.168.123.161:5555 (a PGX escuta e reconhece a fala). Sem isso o microfone fica
+        mudo. Repete a cada 60 s (se o app da Unitree mudar o modo, volta)."""
+        while True:
+            try:
+                with self.trava:
+                    code, _ = self._cli()._Call(1008, json.dumps({"mode": 1}))
+                if self.mic != code:
+                    print(f"[diagnóstico] 🎤 microfone {'LIGADO (multicast 239.168.123.161:5555)' if code == 0 else f'falhou: código {code}'}",
+                          flush=True)
+                self.mic = code
+            except Exception as e:  # noqa: BLE001
+                print(f"[diagnóstico] 🎤 microfone falhou: {e}", flush=True)
+                self.mic = str(e)
+            time.sleep(60)
+
+    def led(self, r, g, b):
+        """28/10: luz do rosto (voice API 1010). Com a ponte em pânico a luz é dela (vermelho/laranja): recusa."""
+        pan, _ = D.pega("panico")
+        if pan is not None and pan.get("panico"):
+            return False, "ponte em pânico: a luz mostra a trava"
+        with self.trava:
+            code = self._cli().LedControl(int(r), int(g), int(b))
+        self.led_atual = (int(r), int(g), int(b))
+        return code == 0, f"código {code}"
 
     def pede(self, pcm, texto):
         try:
@@ -420,24 +463,22 @@ class Voz:
             if pan is not None and pan.get("panico") and "pânico" not in texto.lower():
                 continue
             try:
-                if self.cliente is None:
-                    from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
-                    c = AudioClient()
-                    c.SetTimeout(3.0)
-                    c.Init()
-                    c.SetVolume(self.volume)
-                    self.cliente = c
+                with self.trava:
+                    self._cli()
                 if not pcm:   # sem áudio: voz interna do G1 (TtsMaker; speaker 1 = inglês)
-                    self.cliente.TtsMaker(texto, 1)
+                    with self.trava:
+                        self.cliente.TtsMaker(texto, 1)
                     self.ultima = texto
                     print(f"[diagnóstico] 🗣  (G1) {texto}", flush=True)
                     time.sleep(0.5 + 0.08 * len(texto))
                     continue
                 sid = str(time.time_ns())
                 for i in range(0, len(pcm), 32000):   # 1 s por pedaço
-                    self.cliente.PlayStream("prometheus_fala", sid, list(pcm[i:i + 32000]))
+                    with self.trava:
+                        self.cliente.PlayStream("prometheus_fala", sid, list(pcm[i:i + 32000]))
                     time.sleep(min(1.0, (len(pcm) - i) / 32000.0))
-                self.cliente.PlayStop("prometheus_fala")
+                with self.trava:
+                    self.cliente.PlayStop("prometheus_fala")
                 self.ultima = texto
                 print(f"[diagnóstico] 🗣  {texto}", flush=True)
             except Exception as e:  # noqa: BLE001
@@ -523,6 +564,14 @@ def main():
                 msg = POSE.comeca(tipo)
                 print(f"[diagnóstico] botão pose inicial ({tipo}): {msg}", flush=True)
                 return self._manda(json.dumps({"ok": msg == "indo", "msg": msg}).encode(), "application/json")
+            elif self.path.startswith("/led"):   # 28/10: /led?r=0&g=120&b=255 — a luz do rosto
+                import urllib.parse
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                try:
+                    ok, msg = VOZ.led(*(max(0, min(255, int(q.get(k, ["0"])[0]))) for k in ("r", "g", "b")))
+                except Exception as e:  # noqa: BLE001
+                    ok, msg = False, str(e)
+                return self._manda(json.dumps({"ok": ok, "msg": msg}).encode(), "application/json")
             elif self.path == "/panico":
                 pedido.send(json.dumps({"panico": True}).encode(), zmq.NOBLOCK)
                 print("[diagnóstico] PÂNICO pela página", flush=True)

@@ -73,6 +73,13 @@ class Orquestrador:
         self.retry = None                              # (frase, t) esperando CONFIRMAR para tentar de novo
         self.retry_ok = threading.Event()
         self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
+        # 28/10: VOZ — "Prometheus, ..." pelo microfone do robô (ouvido_g1.py) e a luz do rosto pelo painel
+        self.led_base = (0, 0, 0)                      # a cor "de descanso" (muda por voz: "muda a luz para azul")
+        self.ouvido = None
+        if getattr(a, "ouvido", 0):
+            from ouvido_g1 import Ouvido
+            self.ouvido = Ouvido(self.voz_pergunta, self.voz_estado, ip_local=a.ip_local,
+                                 log=lambda t: print(t, flush=True))
 
     # ── registro (a página lê por /estado) ──
     def diz(self, quem, texto, **extra):
@@ -126,11 +133,62 @@ class Orquestrador:
                             "-f", "s16le", f"{d}/a.pcm"], check=True)
             return open(f"{d}/a.pcm", "rb").read()
 
+    # ── luz do rosto e voz ──
+    CORES = {"vermelh": ((255, 0, 0), "vermelha"), "verde": ((0, 255, 0), "verde"), "azul": ((0, 80, 255), "azul"),
+             "amarel": ((255, 200, 0), "amarela"), "laranja": ((255, 110, 0), "laranja"),
+             "rox": ((150, 0, 255), "roxa"), "lilás": ((200, 120, 255), "lilás"), "rosa": ((255, 60, 150), "rosa"),
+             "branc": ((255, 255, 255), "branca"), "ciano": ((0, 220, 255), "ciano"),
+             "turquesa": ((0, 220, 180), "turquesa")}
+    LUZ = re.compile(r"\b(luz|led|cor|olhos?|rosto)\b", re.IGNORECASE)
+
+    def led(self, rgb):
+        try:
+            r, g, b = rgb
+            json.loads(urllib.request.urlopen(urllib.request.Request(
+                f"{self.a.painel}/led?r={r}&g={g}&b={b}", data=b"", method="POST"), timeout=3).read())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def voz_estado(self, e):
+        """O ouvido mudou de estado. Só "acordou" (ouviu 'Prometheus' sozinho) acende — barulho não pisca a luz."""
+        if self.a.led_voz and e == "acordou":
+            self.led((0, 120, 255))
+            self.fala("Sim?", "voz", registra=False)
+
+    def voz_pergunta(self, texto):
+        """Ouviu "Prometheus, <texto>": pergunta de luz é resolvida aqui; o resto vai para a conversa (uma ORDEM vira
+        PLANO e precisa de CONFIRMAR na tela, como digitada — a voz não libera nada)."""
+        if self.a.led_voz:
+            self.led((150, 0, 255))   # pensando
+        t = texto.lower()
+        if self.LUZ.search(t):
+            if re.search(r"\b(apag|deslig)", t):
+                self.led_base = (0, 0, 0)
+                self.diz("você", f"🎤 {texto}")
+                self.fala("Pronto, apaguei a luz.", "voz")
+                return
+            for chave, (rgb, nome) in self.CORES.items():
+                if chave in t:
+                    self.led_base = rgb
+                    self.diz("você", f"🎤 {texto}")
+                    self.led(rgb)
+                    self.fala(f"Pronto, luz {nome}.", "voz")
+                    return
+        self.conversa(texto, voz=True)
+        if self.a.led_voz and not self.rodando:
+            self.led(self.led_base)
+
     def fala(self, texto, origem="ER-1", registra=True):
         """O robô fala em português (pelo painel do robô). registra=False: o texto já está no chat (resposta do ER-1
         marcada com 🔊) — não repete a mesma frase duas vezes."""
         try:
             pcm = self._pcm(texto)
+            dur = len(pcm) / 32000.0
+            if self.ouvido is not None:   # surdo enquanto fala (senão ele se ouve), + a fila do painel
+                self.ouvido.surdo_ate(time.time() + dur + 1.2)
+            if self.a.led_voz:
+                self.led((0, 255, 60))
+                threading.Timer(dur + 0.6, lambda: self.led(self.led_base)).start()
             u = f"{self.a.painel}/fala?texto={urllib.parse.quote(texto)}"
             urllib.request.urlopen(urllib.request.Request(u, data=pcm, method="POST"), timeout=10).read()
             if registra:
@@ -203,7 +261,9 @@ class Orquestrador:
         novas = [f for f in frases if norma(f) not in ditas]
         return " ".join(novas).strip() or frases[0]
 
-    def conversa(self, texto):
+    def conversa(self, texto, voz=False):
+        if voz:
+            self.diz("sistema", "🎤 ouvi pela voz do robô", fino=True)
         if self.COMANDO.match(texto):   # ordem ("coloca o copo no coador"): vira PLANO (nada vai ao robô sem CONFIRMAR)
             print("[sistema] ordem no chat: vira plano (nada vai ao robô sem CONFIRMAR)", flush=True)
             return self.objetivo(texto)
@@ -468,7 +528,10 @@ button.conf{background:#d98e04}button:disabled{opacity:.35;cursor:not-allowed}
 <div class="barra"><label class="chave"><input type="checkbox" id="lib"> robô liberado</label>
 <button type="button" class="conf" id="conf" disabled>✔ CONFIRMAR plano</button>
 <button type="button" class="parar" id="parar">⏹ PARAR</button>
-<button type="button" id="reset" title="apaga a memória da conversa e limpa o chat">🧹 Novo contexto</button></div></section></main>
+<button type="button" id="reset" title="apaga a memória da conversa e limpa o chat">🧹 Novo contexto</button></div>
+<div class="barra"><label class="chave" title="fale 'Prometheus, ...' perto do robô"><input type="checkbox" id="ouv"> 🎤 ouvir "Prometheus"</label>
+<label class="chave">luz do rosto <input type="color" id="cor" value="#000000" style="width:42px;height:28px"></label>
+<span id="ouviu" class="t"></span></div></section></main>
 <script>
 const CAB = "__CABINE__";
 document.getElementById("cam").src = CAB + "/camera/head_stereo_left.mjpg";
@@ -481,6 +544,8 @@ document.getElementById("reset").onclick = () => { post("/reset"); document.getE
 document.getElementById("falar").onclick = () => { const t = txt.value.trim(); if(t){ post("/falar",{texto:t}); txt.value=""; } };
 document.getElementById("lib").onchange = e => post("/libera", {sim: e.target.checked});
 document.getElementById("conf").onclick = () => { if(confirm("Executar no robô?")) post("/confirma"); };
+document.getElementById("ouv").onchange = e => post("/ouvido", {sim: e.target.checked});
+document.getElementById("cor").onchange = e => post("/led", {cor: e.target.value});
 async function atualiza(){
   try{
     const e = await (await fetch("/estado")).json();
@@ -488,6 +553,11 @@ async function atualiza(){
     document.getElementById("lib").checked = e.liberado;
     document.getElementById("conf").disabled = !(e.pendente && e.liberado && (!e.rodando || e.retry));
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
+    const ov = e.ouvido;
+    document.getElementById("ouv").checked = !!(ov && ov.ligado);
+    document.getElementById("ouv").disabled = !ov;
+    document.getElementById("ouviu").textContent = !ov ? "(ouvido desligado: --ouvido 1)" : !ov.pronto ? "carregando o Whisper..." :
+      (ov.pacotes ? "" : "⚠️ sem áudio do microfone (painel do robô liga) · ") + (ov.ultimo ? "última fala: " + ov.ultimo : "");
     const chat = document.getElementById("chat");
     if (e.msgs.length < n) { document.getElementById("chat").innerHTML = ""; n = 0; }
     for(const m of e.msgs.slice(n)){
@@ -519,6 +589,9 @@ def main():
     ap.add_argument("--tempo-max", type=float, default=120.0, help="segundos por tentativa de cada etapa")
     ap.add_argument("--volta-s", type=float, default=10.0, help="segundos esperando voltar à pose inicial")
     ap.add_argument("--max-tokens", type=int, default=200)
+    ap.add_argument("--ouvido", type=int, default=1, help="1 = ouve 'Prometheus, ...' pelo microfone do robô (Whisper)")
+    ap.add_argument("--ip-local", default="192.168.123.165", help="IP da PGX na rede do robô (multicast do microfone)")
+    ap.add_argument("--led-voz", type=int, default=1, help="1 = a luz do rosto mostra acordou/pensando/falando")
     a = ap.parse_args()
     o = Orquestrador(a)
 
@@ -541,7 +614,11 @@ def main():
                 pend = (o.pendente is not None and time.time() - o.pendente_t <= 60) or o.retry is not None
                 return self._json({"msgs": msgs, "rodando": o.rodando, "passo": o.passo,
                                    "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES],
-                                   "pendente": pend, "liberado": o.esta_liberado(), "retry": o.retry is not None})
+                                   "pendente": pend, "liberado": o.esta_liberado(), "retry": o.retry is not None,
+                                   "ouvido": None if o.ouvido is None else {
+                                       "ligado": o.ouvido.ligado, "pronto": o.ouvido.pronto(), "pacotes": o.ouvido.pacotes,
+                                       "ultimo": ("✅ " if o.ouvido.ultimo["ativou"] else "· ") + o.ouvido.ultimo["texto"]
+                                       if o.ouvido.ultimo["texto"] else ""}})
             host = (self.headers.get("Host") or "localhost").split(":")[0]
             cab = a.cabine_navegador or f"http://{host}:8090"
             b = PAGINA.replace("__CABINE__", cab).encode()
@@ -570,6 +647,13 @@ def main():
                 threading.Thread(target=o.confirma, daemon=True).start()
             elif self.path == "/libera":
                 o.libera(bool(corpo.get("sim")))
+            elif self.path == "/ouvido" and o.ouvido is not None:
+                o.ouvido.ligado = bool(corpo.get("sim"))
+                o.diz("sistema", "🎤 ouvindo 'Prometheus'" if o.ouvido.ligado else "🎤 ouvido desligado")
+            elif self.path == "/led":
+                c = (corpo.get("cor") or "#000000").lstrip("#")
+                o.led_base = tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+                o.led(o.led_base)
             elif self.path == "/falar" and texto:
                 threading.Thread(target=o.fala, args=(texto, "você"), daemon=True).start()
             return self._json({"ok": True})
