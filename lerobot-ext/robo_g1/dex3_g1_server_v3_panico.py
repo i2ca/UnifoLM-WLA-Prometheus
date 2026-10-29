@@ -531,6 +531,12 @@ class Trava:
                     for i, q in self.congelado.items():
                         if q is not None and i < len(mc) and int(mc[i].get("mode", 0)) == 1:
                             mc[i]["q"], mc[i]["dq"], mc[i]["tau"] = q, 0.0, 0.0
+                    # 29/10: segurando a pose, o roll/pitch da cintura continuam com a gravidade do tronco (atualizada)
+                    if self.a.gravidade_cintura > 0 and self._tw:
+                        tc = self.a.tau_max_cintura
+                        for i in (13, 14):
+                            if i < len(mc) and i in self._tw:
+                                mc[i]["tau"] = max(-tc, min(tc, self._tw[i]))
                 if self.panico:
                     mao = {}
                     for lado, qs in self.mao_congelada.items():
@@ -558,6 +564,8 @@ class Trava:
             est = {"panico": self.panico, "motivo": self.motivo, "gpio": self.gpio,
                    "botao_ok": self.botao_ok, "botao_solto_s": 0.0 if ok is None else round(time.time() - ok, 2),
                    "descartados": self.n_descartados, "vel_braco": self.a.vel_braco,
+                   "tau_cintura": {str(k): round(v, 2) for k, v in self._tw.items()},   # 29/10: o que a ponte manda
+                   "gravidade_cintura": self.a.gravidade_cintura,
                    "kp_braco": self.a.kp_braco, "kp_punho": self.a.kp_punho, "t": time.time()}
             try:
                 self.sock_status.send(json.dumps(est).encode("utf-8"), zmq.NOBLOCK)
