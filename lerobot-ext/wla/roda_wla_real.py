@@ -950,6 +950,7 @@ def main():
     stats = {}
     volta = None   # botão 'posição inicial' da cabine
     fech_ant, segura_braco = {}, {}   # espera os dedos fecharem antes de subir
+    temp_log = [None]   # 29/10: CSV da cintura
     t_temp = [0.0, 0.0, 0.0]
     segurado = {"left": None, "right": None}   # (posição, ponto ee_rpy) que a zona morta segura
     try:
@@ -1200,6 +1201,21 @@ def main():
             if tc - t_temp[0] > 2.0:
                 t_temp[0] = tc
                 temps = [_temp(est.low["motor_state"][i]) for i in CINTURA[1:]]
+                # 29/10: CSV da cintura (temperatura, torque, ângulo, IMU) a cada 2 s — para comparar rodadas
+                try:
+                    ms = est.low["motor_state"]
+                    rpy = est.low["imu_state"]["rpy"]
+                    if temp_log[0] is None:
+                        temp_log[0] = open(a.log.replace(".csv", "_cintura.csv"), "w")
+                        temp_log[0].write("t,temp_yaw,temp_roll,temp_pitch,tau_roll,tau_pitch,q_roll,q_pitch,"
+                                          "imu_roll,imu_pitch,temp_ombro_dir,temp_ombro_esq,tarefa\n")
+                    temp_log[0].write(",".join(str(round(v, 3)) for v in [
+                        tc, _temp(ms[12]), _temp(ms[13]), _temp(ms[14]), ms[13].get("tau_est", 0), ms[14].get("tau_est", 0),
+                        ms[13]["q"], ms[14]["q"], rpy[0], rpy[1], _temp(ms[22]), _temp(ms[15])]) +
+                        f",{cabine.tarefa()[0]!r}\n")
+                    temp_log[0].flush()
+                except Exception:  # noqa: BLE001
+                    pass
                 if a.temp_tronco > 0 and max(temps) >= a.temp_tronco and cabine.tarefa()[0]:
                     print(f"\n🌡️  cintura roll/pitch a {temps} °C (limite {a.temp_tronco:.0f}): PAREI a tarefa e volto à "
                           "posição inicial. Deixe esfriar; mande a tarefa de novo na cabine.", flush=True)
