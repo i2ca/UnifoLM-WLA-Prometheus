@@ -159,6 +159,41 @@ class FK:
                 tau[i] = -float(z @ t)
         return tau
 
+    def gravidade_cintura(self, q29, g_pelvis=(0.0, 0.0, -9.81), extra=None):
+        """29/10: torque (Nm) que o YAW/ROLL/PITCH da cintura (12, 13, 14) fazem para segurar o peso de TUDO acima
+        deles (tronco, cabeça, os dois braços e mãos, na pose q29) — a mesma conta de gravidade() dos braços, para o
+        tronco não ceder para o lado com o braço esticado. Devolve {12: tau, 13: tau, 14: tau}.
+        extra = {lado: (kg, xyz no wrist_yaw_link)} como em gravidade()."""
+        g = np.asarray(g_pelvis, float)
+        raiz = next(f for f, j in self.junta_do_filho.items() if j["nome"] == "waist_yaw_joint")
+        jy = self.junta_do_filho[raiz]
+        poses, eixos = {}, {}
+
+        def visita(link, R, p, j):
+            pj = p + R @ j["p"]
+            Rj = R @ j["R"]
+            if j["tipo"] in ("revolute", "continuous"):
+                if j["nome"] in self.idx:
+                    eixos[link] = (self.idx[j["nome"]], Rj @ (j["eixo"] / np.linalg.norm(j["eixo"])), pj)
+                Rj = Rj @ _eixo(j["eixo"], q29[self.idx[j["nome"]]] if j["nome"] in self.idx else 0.0)
+            poses[link] = (Rj, pj)
+            for filho in self.filhos.get(link, []):
+                visita(filho, Rj, pj, self.junta_do_filho[filho])
+
+        visita(raiz, np.eye(3), np.zeros(3), jy)   # o pai do waist_yaw é a pelvis (origem)
+        cms = [(ln, *self.massa[ln][:1], p + R @ self.massa[ln][1]) for ln, (R, p) in poses.items() if ln in self.massa]
+        for lado, (m, c) in (extra or {}).items():
+            R, p = poses[f"{lado}_wrist_yaw_link"]
+            cms.append((f"{lado}_wrist_yaw_link", m, p + R @ np.asarray(c, float)))
+        tau = {}
+        for filho, (i, z, o) in eixos.items():
+            if i not in (12, 13, 14):
+                continue
+            abaixo = self._descendentes(filho)
+            t = sum((np.cross(c - o, m * g) for ln, m, c in cms if ln in abaixo), np.zeros(3))
+            tau[i] = -float(z @ t)
+        return tau
+
     def _descendentes(self, link):
         if not hasattr(self, "_desc"):
             self._desc = {}
