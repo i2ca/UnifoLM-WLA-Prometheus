@@ -279,7 +279,7 @@ class Trava:
     def _tau_cintura(self, mc):
         """29/10: torque da gravidade no roll/pitch da cintura. O repasse só GUARDA a pose comandada e LÊ o último
         valor; a conta (fk_g1.gravidade_cintura: tronco + cabeça + os dois braços na pose comandada, gravidade pela
-        IMU; ~6,5 ms no robô) roda numa thread a cada 50 ms, sem atrasar os comandos. Validado no robô parado:
+        IMU; ~1,1 ms no robô) roda numa thread a cada 50 ms, sem atrasar os comandos. Validado no robô parado:
         roll -7,1 calculado x -7,5 Nm medido; pitch -7,9 x -7,5."""
         self._q_cmd = {i: float(mc[i].get("q", 0.0)) for i in range(12, min(29, len(mc)))
                        if int(mc[i].get("mode", 0)) == 1}

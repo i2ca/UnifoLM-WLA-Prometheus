@@ -159,7 +159,7 @@ class FK:
                 tau[i] = -float(z @ t)
         return tau
 
-    def gravidade_cintura(self, q29, g_pelvis=(0.0, 0.0, -9.81), extra=None):
+    def _gravidade_cintura_lenta(self, q29, g_pelvis=(0.0, 0.0, -9.81), extra=None):
         """29/10: torque (Nm) que o YAW/ROLL/PITCH da cintura (12, 13, 14) fazem para segurar o peso de TUDO acima
         deles (tronco, cabeça, os dois braços e mãos, na pose q29) — a mesma conta de gravidade() dos braços, para o
         tronco não ceder para o lado com o braço esticado. Devolve {12: tau, 13: tau, 14: tau}.
@@ -192,6 +192,89 @@ class FK:
             abaixo = self._descendentes(filho)
             t = sum((np.cross(c - o, m * g) for ln, m, c in cms if ln in abaixo), np.zeros(3))
             tau[i] = -float(z @ t)
+        return tau
+
+    def _prepara_cintura(self):
+        """29/10: a árvore acima da cintura em listas, UMA vez (pai, transformação fixa, eixo, massa, quem fica
+        acima de cada junta da cintura) — a conta por ciclo fica só com as rotações das juntas."""
+        raiz = next(f for f, j in self.junta_do_filho.items() if j["nome"] == "waist_yaw_joint")
+        ordem, pilha = [], [(raiz, -1)]
+        while pilha:   # pai sempre antes do filho
+            link, pai = pilha.pop()
+            k = len(ordem)
+            ordem.append((link, pai))
+            pilha.extend((f, k) for f in self.filhos.get(link, []))
+        n = len(ordem)
+        self._c_nome = [ln for ln, _ in ordem]
+        self._c_pai = [pai for _, pai in ordem]
+        self._c_p = np.array([self.junta_do_filho[ln]["p"] for ln, _ in ordem], float)
+        self._c_R = np.array([self.junta_do_filho[ln]["R"] for ln, _ in ordem], float)
+        self._c_eixo, self._c_qi, self._c_K = [], [], []
+        for ln, _ in ordem:
+            j = self.junta_do_filho[ln]
+            gira = j["tipo"] in ("revolute", "continuous") and j["nome"] in self.idx
+            u = j["eixo"] / np.linalg.norm(j["eixo"]) if gira else None
+            self._c_eixo.append(u)
+            self._c_qi.append(self.idx[j["nome"]] if gira else None)
+            self._c_K.append(None if u is None else np.array([[0, -u[2], u[1]], [u[2], 0, -u[0]], [-u[1], u[0], 0]]))
+        self._c_m = np.array([self.massa[ln][0] if ln in self.massa else 0.0 for ln in self._c_nome])
+        self._c_c = np.array([self.massa[ln][1] if ln in self.massa else np.zeros(3) for ln in self._c_nome], float)
+        # quem fica ACIMA (descendente) de cada junta da cintura: máscara sobre a lista
+        self._c_mask = {}
+        for k, qi in enumerate(self._c_qi):
+            if qi in (12, 13, 14):
+                abaixo = self._descendentes(self._c_nome[k])
+                self._c_mask[qi] = (k, np.array([ln in abaixo for ln in self._c_nome]))
+        self._c_punho = {l: self._c_nome.index(f"{l}_wrist_yaw_link") for l in ("left", "right")}
+        self._c_n = n
+
+    def gravidade_cintura(self, q29, g_pelvis=(0.0, 0.0, -9.81), extra=None):
+        """29/10: torque (Nm) que o YAW/ROLL/PITCH da cintura (12, 13, 14) fazem para segurar o peso de TUDO acima
+        deles (tronco, cabeça, os dois braços e mãos, na pose q29) — a mesma conta de gravidade() dos braços, para o
+        tronco não ceder para o lado com o braço esticado. Devolve {12: tau, 13: tau, 14: tau}.
+        extra = {lado: (kg, xyz no wrist_yaw_link)} como em gravidade(). Versão rápida (estrutura pré-calculada;
+        ~1 ms no robô); _gravidade_cintura_lenta é a de referência."""
+        if not hasattr(self, "_c_n"):
+            self._prepara_cintura()
+        g = np.asarray(g_pelvis, float)
+        n = self._c_n
+        Rs = np.empty((n, 3, 3))
+        ps = np.empty((n, 3))
+        eixo_o = {}
+        I3 = np.eye(3)
+        for k in range(n):
+            pai = self._c_pai[k]
+            if pai < 0:
+                Rp, pp = I3, np.zeros(3)
+            else:
+                Rp, pp = Rs[pai], ps[pai]
+            pj = pp + Rp @ self._c_p[k]
+            Rj = Rp @ self._c_R[k]
+            qi = self._c_qi[k]
+            if qi is not None:
+                if qi in (12, 13, 14):
+                    eixo_o[qi] = (Rj @ self._c_eixo[k], pj)
+                a = q29[qi]
+                K = self._c_K[k]
+                Rj = Rj @ (I3 + np.sin(a) * K + (1 - np.cos(a)) * (K @ K))
+            Rs[k], ps[k] = Rj, pj
+        cm = ps + np.einsum("nij,nj->ni", Rs, self._c_c)
+        m = self._c_m.copy()
+        if extra:
+            ext_c, ext_m = [], []
+            for lado, (mx, cx) in extra.items():
+                k = self._c_punho[lado]
+                ext_c.append(ps[k] + Rs[k] @ np.asarray(cx, float))
+                ext_m.append(mx)
+        tau = {}
+        for qi, (k, mask) in self._c_mask.items():
+            z, o = eixo_o[qi]
+            t = np.cross(cm[mask] - o, m[mask, None] * g).sum(0)
+            if extra:
+                for lado, c, mx in zip(extra, ext_c, ext_m):
+                    if mask[self._c_punho[lado]]:
+                        t = t + np.cross(c - o, mx * g)
+            tau[qi] = -float(z @ t)
         return tau
 
     def _descendentes(self, link):
