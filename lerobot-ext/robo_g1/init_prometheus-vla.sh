@@ -25,7 +25,7 @@ GRAVIDADE_CINTURA=1.0  # 29/10: compensação da gravidade do ROLL/PITCH da cint
 TAU_MAX_CINTURA=15  # 29/10: Nm, teto da compensação da gravidade no ROLL/PITCH da cintura (medido ~7,5 com o braço direito esticado); 0 = desliga
 VEL_MAO=5.0       # rad/s máx. dos dedos Dex3. Era 1,0 (padrão da v3): a mão levava ~1,5 s para fechar (30/09)
 VOLUME=100        # volume da fala "Warning. Pose locked."
-BRACO_ESQ_TRAVADO=true   # 29/10: braço E mão ESQUERDOS imóveis na ponte (as tarefas são da mão direita); false = liberado
+BRACO_ESQ_TRAVADO=false  # 29/10: true = braço E mão ESQUERDOS imóveis na ponte (fica onde estava no rearme). false: o braço esquerdo levantado na pose equilibra o direito (o tronco não pende para o lado)
 VOLUME_BIP=50     # bipe de emergência enquanto o cogumelo está apertado (0-100)
 
 # Painel de diagnóstico no navegador (juntas, temperaturas, mãos, bateria, câmeras, trava):
