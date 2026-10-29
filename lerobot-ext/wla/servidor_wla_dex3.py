@@ -67,6 +67,7 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
         # executor manda. Os papéis seguem a ordem do treino e câmera que não chegou fica de fora (como no treino com
         # câmeras desligadas) — antes eram rotulados pela ORDEM (WBC_IMAGE_ROLES[:n]).
         self._prof = None
+        self._args = args
         modo = getattr(args, "profundidade", "auto")
         usa = modo == "sim" or (modo == "auto" and getattr(args, "lora_run", None) and any(
             "head_depth" in (Path(args.lora_run) / f).read_text() for f in ("config.full.yaml", "config.yaml")
@@ -82,6 +83,31 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
               ("observation.images.cam_left_wrist", "cam_wrist_left"),
               ("observation.images.cam_right_wrist", "cam_wrist_right")]
 
+    def _grava_prof(self, esq_rgb, prof_rgb, Z):
+        """29/10: a cada --grava-prof-s, salva câmera | profundidade lado a lado em ~/profundidade_ao_vivo (as 60
+        últimas) + a escala do estéreo, para comparar com a profundidade do treino (offline)."""
+        import time
+        iv = float(getattr(self._args, "grava_prof_s", 0) or 0)
+        if iv <= 0 or time.time() - getattr(self, "_prof_t", 0) < iv:
+            return
+        self._prof_t = time.time()
+        try:
+            import cv2
+            import numpy as np
+            pasta = Path.home() / "profundidade_ao_vivo"
+            pasta.mkdir(exist_ok=True)
+            nome = time.strftime("%H%M%S")
+            cv2.imwrite(str(pasta / f"{nome}.jpg"), cv2.cvtColor(np.hstack([esq_rgb, prof_rgb]), cv2.COLOR_RGB2BGR))
+            ok = np.isfinite(Z)
+            info = {"t": nome, "escala_estereo": self._prof.st, "sem_estereo": self._prof.n_sem_estereo,
+                    "Z_mediana_m": float(np.nanmedian(Z)) if ok.any() else None, "cobertura": float(ok.mean())}
+            with open(pasta / "info.jsonl", "a") as f:
+                f.write(__import__("json").dumps(info, default=float) + "\n")
+            for velho in sorted(pasta.glob("*.jpg"))[:-60]:
+                velho.unlink()
+        except Exception as e:  # noqa: BLE001
+            print(f"🌊 não gravei a profundidade: {e}", flush=True)
+
     def _imagens_por_nome(self, obs):
         import cv2
         imgs, papeis = [], []
@@ -94,8 +120,10 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
                 if esq.shape[:2] != (480, 640) or dir_.shape[:2] != (480, 640):
                     continue   # a profundidade é calculada na grade 640x480 da ZED ("largo")
                 from profundidade_hibrida import colore
-                rgb = colore(self._prof.lote([(esq, dir_)])[0])
+                Z = self._prof.lote([(esq, dir_)])[0]
+                rgb = colore(Z)
                 img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                self._grava_prof(esq, rgb, Z)
             else:
                 if chave not in obs:
                     continue
@@ -263,6 +291,8 @@ def main():
     p.add_argument("--lora_passo", type=int, default=8000)
     p.add_argument("--profundidade", choices=["auto", "sim", "nao"], default="auto",
                    help="head_depth ao vivo (auto = se o run treinou com head_depth); precisa do head_stereo_right")
+    p.add_argument("--grava-prof-s", type=float, default=2.0,
+                   help="a cada N s salva câmera|profundidade em ~/profundidade_ao_vivo (0 = não grava)")
     a = p.parse_args()
     if a.lora_run:
         instala_carregador_lora(a.lora_run, a.lora_passo)
