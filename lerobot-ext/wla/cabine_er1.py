@@ -78,6 +78,7 @@ class Orquestrador:
             from ouvido_g1 import Ouvido
             self.ouvido = Ouvido(self.voz_pergunta, self.voz_estado, ip_local=a.ip_local,
                                  log=lambda t: print(t, flush=True))
+            self.ouvido.ligado = bool(a.ouvir_ao_iniciar)   # 29/10: começa DESLIGADO; liga na chave 🎤 da página
 
     # ── registro (a página lê por /estado) ──
     def diz(self, quem, texto, **extra):
@@ -622,6 +623,8 @@ def main():
     ap.add_argument("--volta-s", type=float, default=10.0, help="segundos esperando voltar à pose inicial")
     ap.add_argument("--max-tokens", type=int, default=200)
     ap.add_argument("--ouvido", type=int, default=1, help="1 = ouve 'Prometheus, ...' pelo microfone do robô (Whisper)")
+    ap.add_argument("--ouvir-ao-iniciar", type=int, default=0, help="1 = já começa ouvindo 'Prometheus' (padrão: "
+                    "desligado, liga na chave da página)")
     ap.add_argument("--ip-local", default="192.168.123.165", help="IP da PGX na rede do robô (multicast do microfone)")
     ap.add_argument("--led-voz", type=int, default=1, help="1 = a luz do rosto mostra acordou/pensando/falando")
     a = ap.parse_args()
