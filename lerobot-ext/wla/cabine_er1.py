@@ -427,18 +427,23 @@ class Orquestrador:
             self.diz("sistema", f"ER-1 indisponível: {e}")
 
     # ── objetivo: planejar + executar ──
-    # 29/10: pela VOZ, uma ordem = UMA tarefa (pelas palavras; o ER-1 só se elas não bastarem)
+    # 29/10: a frase pede UMA coisa ("pegar a caneca", "coloca no coador") -> só essa tarefa, sem o ER-1 (ele montava
+    # o objetivo inteiro: pegar E colocar no coador). Pede duas ("pega a caneca e coloca no coador") -> o ER-1 planeja.
     TAREFA_VOZ = [
         (re.compile(r"coador|filtro|coar", re.IGNORECASE), "Place the white mug under the coffee strainer."),
         (re.compile(r"ma[çc][aã]|fruta", re.IGNORECASE), "Pick up the apple."),
-        (re.compile(r"caneca|copo|colo\b|x[ií]cara|xicara", re.IGNORECASE), "Pick up the white mug."),
+        (re.compile(r"\bpeg\w*.*\b(caneca|copo|colo|x[ií]cara)|\b(caneca|copo|colo|x[ií]cara)\b(?!.*coador)",
+                    re.IGNORECASE), "Pick up the white mug."),
     ]
 
     def tarefa_unica(self, texto):
-        for padrao, h in self.TAREFA_VOZ:
-            if padrao.search(texto):
-                return h
-        return None
+        """A tarefa, se a frase pede exatamente UMA; senão None (o ER-1 planeja)."""
+        achou = [h for padrao, h in self.TAREFA_VOZ if padrao.search(texto)]
+        pega_e_coloca = re.search(r"\bpeg\w*", texto, re.IGNORECASE) and re.search(r"coador|filtro", texto,
+                                                                                   re.IGNORECASE)
+        if pega_e_coloca or len(achou) != 1:
+            return None
+        return achou[0]
 
     def objetivo(self, texto, voz=False):
         if self.rodando:
@@ -447,7 +452,7 @@ class Orquestrador:
                 self.fala("Já estou fazendo uma tarefa. Diga para, se quiser que eu pare.", "plano")
             return
         self.diz("você", f"🎯 objetivo: {texto}")
-        unica = self.tarefa_unica(texto) if voz else None
+        unica = self.tarefa_unica(texto)
         if unica:
             return self._pede_confirmacao([unica], voz)
         lista = "\n".join(f"{i}. {h}" for i, h in enumerate(HABILIDADES, 1))
