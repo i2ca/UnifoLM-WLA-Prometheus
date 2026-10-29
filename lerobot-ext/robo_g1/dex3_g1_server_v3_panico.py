@@ -69,6 +69,7 @@ import os
 REARME_PORT = 6006   # PULL  PC -> robô: {"rearmar": true} | {"panico": true}
 PANICO_PORT = 6007   # PUB   robô -> PC: estado do pânico
 IDX_BRACOS = list(range(15, 29))
+IDX_BRACO_ESQ = list(range(15, 22))   # 29/10: --braco-esq-travado
 IDX_PUNHOS = {19, 20, 21, 26, 27, 28}
 IDX_CINTURA_YAW = 12
 IDX_LIMITADOS = [IDX_CINTURA_YAW] + IDX_BRACOS
@@ -262,6 +263,7 @@ class Trava:
         self.t_mao_env = {}
         self.congelado = None
         self.mao_congelada = {}
+        self.esq_fixo = {}        # 29/10: pose do braço esquerdo travado (--braco-esq-travado)
         self.rodando = True
         self.n_descartados = 0
         self.alerta = None
@@ -309,6 +311,7 @@ class Trava:
             self.motivo = ""
             self.congelado = None
             self.mao_congelada = {}
+            self.esq_fixo = {}   # o braço esquerdo trava de novo onde estiver
         print("\n✅ Rearmado: comandos do PC voltam a passar (lentos e leves).", flush=True)
         if self.alerta is not None:
             self.alerta.liberado()
@@ -327,6 +330,13 @@ class Trava:
                 if i >= len(mc) or int(mc[i].get("mode", 0)) != 1:
                     continue
                 alvo = float(mc[i].get("q", 0.0))
+                if self.a.braco_esq_travado and i in IDX_BRACO_ESQ:
+                    # 29/10: BRAÇO ESQUERDO TRAVADO — fica onde estava no 1º comando depois do rearme, diga o PC o
+                    # que disser (as tarefas são da mão direita)
+                    if i not in self.esq_fixo:
+                        med = self._q_medido(i)
+                        self.esq_fixo[i] = alvo if med is None else med
+                    alvo = self.esq_fixo[i]
                 prev = self.q_env.get(i)
                 if prev is None:
                     prev = self._q_medido(i)
@@ -352,6 +362,8 @@ class Trava:
             if self.panico:
                 self.n_descartados += 1
                 return None
+            if self.a.braco_esq_travado and lado == "left":
+                return None   # 29/10: mão esquerda imóvel (nenhum comando do PC passa)
             agora = time.time()
             t0 = self.t_mao_env.get(lado)
             dt = 0.0 if t0 is None else min(agora - t0, 0.05)
@@ -918,6 +930,9 @@ def main():
     parser.add_argument("--volume-bip", type=int, default=50,
                         help="volume do bipe de emergência enquanto o botão está apertado (0-100)")
     parser.add_argument("--sem-som", action="store_true", help="não fala nem acende LED no pânico")
+    parser.add_argument("--braco-esq-travado", action="store_true",
+                        help="29/10: braço E mão ESQUERDOS imóveis: o braço fica onde estava no rearme, a mão não "
+                             "recebe comando do PC (tarefas só com a mão direita)")
     args = parser.parse_args()
     global TRAVA
     TRAVA = Trava(args)

@@ -23,6 +23,7 @@ TAU_MAX_BRACO=10  # 02/10: Nm, teto da compensação da GRAVIDADE que o executor
 TAU_MAX_PUNHO=3   # 02/10: Nm, idem nos punhos
 VEL_MAO=5.0       # rad/s máx. dos dedos Dex3. Era 1,0 (padrão da v3): a mão levava ~1,5 s para fechar (30/09)
 VOLUME=100        # volume da fala "Warning. Pose locked."
+BRACO_ESQ_TRAVADO=true   # 29/10: braço E mão ESQUERDOS imóveis na ponte (as tarefas são da mão direita); false = liberado
 VOLUME_BIP=50     # bipe de emergência enquanto o cogumelo está apertado (0-100)
 
 # Painel de diagnóstico no navegador (juntas, temperaturas, mãos, bateria, câmeras, trava):
@@ -106,7 +107,8 @@ sleep 1
 if [ "$USE_PANICO" = "true" ]; then
     PONTE=$PROJECT_DIR/dex3_g1_server_v3_panico.py
     EXTRA="--vel-braco $VEL_BRACO --kp-braco $KP_BRACO --kp-punho $KP_PUNHO --tau-max-braco $TAU_MAX_BRACO --tau-max-punho $TAU_MAX_PUNHO --vel-mao $VEL_MAO --volume $VOLUME --volume-bip $VOLUME_BIP"
-    NOME="v3 (PÂNICO GPIO4/GPIO6)"
+    [ "$BRACO_ESQ_TRAVADO" = "true" ] && EXTRA="$EXTRA --braco-esq-travado"
+    NOME="v3 (PÂNICO GPIO4/GPIO6)$([ "$BRACO_ESQ_TRAVADO" = "true" ] && echo ' + braço/mão ESQUERDOS travados')"
 else
     PONTE=$PROJECT_DIR/dex3_g1_server_v2.py
     EXTRA=""
