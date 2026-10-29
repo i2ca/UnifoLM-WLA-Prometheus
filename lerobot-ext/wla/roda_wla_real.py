@@ -251,9 +251,9 @@ def main():
     ap.add_argument("--gravidade", type=float, default=1.0,
                     help="compensação da GRAVIDADE dos braços (fator do torque do modelo do G1, 0 desliga; 02/10, como "
                          "o gravity_compensation do LeRobot). A ponte só deixa passar com TAU_MAX_* > 0 no init")
-    ap.add_argument("--gravidade-cintura", type=float, default=1.0,
-                    help="29/10: compensação da gravidade no ROLL/PITCH da cintura (tronco + braços), fator; 0 desliga. "
-                         "A ponte limita a TAU_MAX_CINTURA do init")
+    ap.add_argument("--gravidade-cintura", type=float, default=0.0,
+                    help="29/10: compensação da gravidade no ROLL/PITCH da cintura calculada AQUI (fator). Padrão 0: "
+                         "quem calcula é a PONTE no robô (GRAVIDADE_CINTURA do init), para valer em qualquer cliente")
     ap.add_argument("--massa-punho", type=float, default=0.15,
                     help="kg no punho fora do URDF (D435 + suporte), para a compensação da gravidade")
     ap.add_argument("--zona-morta-cm", type=float, nargs=2, default=[0.0, 0.0], metavar=("ESQ", "DIR"),

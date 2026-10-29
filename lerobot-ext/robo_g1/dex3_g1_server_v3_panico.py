@@ -264,6 +264,7 @@ class Trava:
         self.congelado = None
         self.mao_congelada = {}
         self.esq_fixo = {}        # 29/10: pose do braço esquerdo travado (--braco-esq-travado)
+        self._tw, self._q_cmd, self._tw_thread = {}, {}, None   # 29/10: gravidade da cintura (thread própria)
         self.rodando = True
         self.n_descartados = 0
         self.alerta = None
@@ -274,6 +275,51 @@ class Trava:
 
     def nova_mao(self, lado, msg):
         self.maos[lado] = msg
+
+    def _tau_cintura(self, mc):
+        """29/10: torque da gravidade no roll/pitch da cintura. O repasse só GUARDA a pose comandada e LÊ o último
+        valor; a conta (fk_g1.gravidade_cintura: tronco + cabeça + os dois braços na pose comandada, gravidade pela
+        IMU; ~6,5 ms no robô) roda numa thread a cada 50 ms, sem atrasar os comandos. Validado no robô parado:
+        roll -7,1 calculado x -7,5 Nm medido; pitch -7,9 x -7,5."""
+        self._q_cmd = {i: float(mc[i].get("q", 0.0)) for i in range(12, min(29, len(mc)))
+                       if int(mc[i].get("mode", 0)) == 1}
+        if self._tw_thread is None:
+            self._tw_thread = threading.Thread(target=self._laco_cintura, daemon=True, name="gravidade_cintura")
+            self._tw_thread.start()
+        return self._tw
+
+    def _laco_cintura(self):
+        import os
+        import sys
+        import numpy as np
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from fk_g1 import FK
+            fk = FK(urdf=os.path.join(os.path.dirname(os.path.abspath(__file__)), "g1_body29_hand14.urdf"))
+            print("[Pânico] ⚖️ compensação da gravidade da cintura calculada aqui no robô (a cada 50 ms)", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[Pânico] ⚠️ gravidade da cintura desligada: {e}", flush=True)
+            return
+        extra = {l: (0.15, (0.05, 0.0, 0.04)) for l in ("left", "right")}   # câmera/suporte no punho
+        erro = False
+        while self.rodando:
+            time.sleep(0.05)
+            low = self.lowstate
+            if low is None:
+                continue
+            try:
+                q = np.array([float(low.motor_state[i].q) for i in range(29)])
+                for i, v in dict(self._q_cmd).items():   # pose COMANDADA (como a dos braços no executor)
+                    q[i] = v
+                r, p = float(low.imu_state.rpy[0]), float(low.imu_state.rpy[1])
+                cr, sr, cp, sp = np.cos(r), np.sin(r), np.cos(p), np.sin(p)
+                g = np.array([[cp, sp * sr, sp * cr], [0, cr, -sr], [-sp, cp * sr, cp * cr]]).T @ np.array([0, 0, -9.81])
+                t = fk.gravidade_cintura(q, g, extra)
+                self._tw = {i: self.a.gravidade_cintura * t[i] for i in (13, 14)}
+            except Exception as e:  # noqa: BLE001
+                if not erro:
+                    print(f"[Pânico] ⚠️ gravidade da cintura falhou ({e}) — tau 0", flush=True)
+                erro, self._tw = True, {13: 0.0, 14: 0.0}
 
     def _q_medido(self, i):
         return None if self.lowstate is None else float(self.lowstate.motor_state[i].q)
@@ -326,12 +372,14 @@ class Trava:
             dt = 0.0 if self.t_env is None else min(agora - self.t_env, 0.05)
             data = copy.deepcopy(data)
             mc = data.get("motor_cmd", [])
-            # 29/10: roll/pitch da cintura (13, 14) — o tau é a compensação da gravidade do tronco; até
-            # --tau-max-cintura (0 = zera, como era)
+            # 29/10: roll/pitch da cintura (13, 14) — compensação da gravidade do tronco + braços CALCULADA AQUI no
+            # robô (vale para qualquer cliente: executor, teleoperação, pose), até --tau-max-cintura (0 = zera)
+            tw = self._tau_cintura(mc) if self.a.gravidade_cintura > 0 else {}
             for i in (13, 14):
                 if i < len(mc):
                     tc = self.a.tau_max_cintura
-                    mc[i]["tau"] = max(-tc, min(tc, float(mc[i].get("tau", 0.0))))
+                    t = tw.get(i, float(mc[i].get("tau", 0.0)))
+                    mc[i]["tau"] = max(-tc, min(tc, t))
             for i in IDX_LIMITADOS:
                 if i >= len(mc) or int(mc[i].get("mode", 0)) != 1:
                     continue
@@ -929,6 +977,9 @@ def main():
     parser.add_argument("--tau-max-punho", type=float, default=0.0, help="Nm: idem para os punhos")
     parser.add_argument("--tau-max-cintura", type=float, default=0.0,
                         help="29/10: Nm, teto da compensação da gravidade no roll/pitch da cintura (0 = zera)")
+    parser.add_argument("--gravidade-cintura", type=float, default=0.0,
+                        help="29/10: fator da compensação da gravidade da cintura CALCULADA NA PONTE (0 = usa o tau "
+                             "que o PC mandar, limitado)")
     parser.add_argument("--vel-mao", type=float, default=1.0, help="rad/s máx. dos dedos Dex3")
     parser.add_argument("--kp-mao", type=float, default=1.0, help="teto de kp dos dedos Dex3")
     parser.add_argument("--gpio-entrada", default="PCC.03", help="GPIO6 da Unitree (pino 130 do NX)")
