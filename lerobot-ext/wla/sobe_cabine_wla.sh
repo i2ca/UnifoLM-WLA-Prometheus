@@ -5,7 +5,8 @@
 #   3. na cabine (http://<pgx>:8090) você aperta "pegar caneca", depois "caneca → coador" (ou escreve a frase);
 #      "⏸ parar" = o robô MANTÉM a posição em que está e espera outra tarefa (emergência: o cogumelo).
 # 4. ER-1 (narração/tradução) só com NARRA=1 — por padrão o WLA roda sozinho.
-# Argumentos extras vão para o roda_wla_real.py (ex.: --pose inicial, --braco-esquerdo ativo).
+# Argumentos extras vão para o roda_wla_real.py (ex.: --pose inicial, --braco-esquerdo ativo, --cintura parada).
+# 29/10: braço esquerdo PARADO por padrão (as tarefas são da mão direita; ativo ele pesava e se mexia à toa).
 #   bash sobe_cabine_wla.sh
 WLA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIFOLM_WLA="${UNIFOLM_WLA:-$HOME/DEV/unifolm-wla}"
@@ -53,4 +54,4 @@ SEM_ER1=()
 [ "${TERMINOU:-0}" = "1" ] && [ "${NARRA:-0}" != "1" ] && SEM_ER1+=(--so-terminou --narra-s "${TERMINOU_S:-5}")
 [ "${FALA:-1}" = "0" ] && SEM_ER1+=(--voz nenhuma)
 exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
-    --braco-esquerdo ativo --juntas-travadas 20 "${SEM_ER1[@]}" "$@"
+    --braco-esquerdo parado --juntas-travadas 20 "${SEM_ER1[@]}" "$@"

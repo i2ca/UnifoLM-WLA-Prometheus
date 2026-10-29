@@ -264,9 +264,10 @@ def main():
                     help="°C: acima disto no roll/pitch da cintura PARA a tarefa e volta à posição inicial (mão aberta) "
                          "para esfriar; 0 = só avisa a partir de 60 °C (padrão: 27/10 o usuário pediu sem a proteção; "
                          "use --temp-tronco 75 para ligar)")
-    ap.add_argument("--kp-roll", type=float, nargs=2, default=[100.0, 4.0], metavar=("KP", "KD"),
+    ap.add_argument("--kp-roll", type=float, nargs=2, default=[200.0, 6.0], metavar=("KP", "KD"),
                     help="kp/kd do ROLL da cintura (o pitch segue --kp-tronco). 27/10: com 300/8 o roll esquentou a 86 °C "
-                         "— ele quase não segura peso, e qualquer diferença do 'zero' virava força contínua")
+                         "— ele quase não segura peso, e qualquer diferença do 'zero' virava força contínua; 29/10: com "
+                         "100/4 o tronco ficou mole e o robô quase caiu -> 200/6 (olhe a temperatura no log)")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
