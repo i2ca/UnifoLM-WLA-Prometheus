@@ -273,6 +273,63 @@ class Orquestrador:
         except Exception:  # noqa: BLE001
             return texto
 
+    # 29/10: o robô sabe de si — relógio sempre; o resto do estado (painel do robô) quando perguntam dele
+    STATUS = re.compile(r"\bhora|horas|\bdia\b|\bdata\b|bateria|carga|energia|temperatura|quente|calor|esquent|"
+                        r"status|estado|como (voc[eê]|vc|tu) (est[aá]|t[aá])|tudo bem|inclin|sa[uú]de|motor|junta|"
+                        r"c[aâ]mera|trava|p[aâ]nico|cansad|sente", re.IGNORECASE)
+    DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
+
+    def relogio(self):
+        t = time.localtime()
+        periodo = "manhã" if t.tm_hour < 12 else "tarde" if t.tm_hour < 18 else "noite"
+        return f"Agora é {self.DIAS[t.tm_wday]}, {time.strftime('%d/%m/%Y')}, {time.strftime('%H:%M')} ({periodo})."
+
+    def status_robo(self):
+        """Resumo em português do estado do robô (painel :8095/estado.json)."""
+        try:
+            e = json.loads(urllib.request.urlopen(f"{self.a.painel}/estado.json", timeout=3).read())
+        except Exception as ex:  # noqa: BLE001
+            return f"Não consegui ler o meu estado agora ({ex})."
+        partes = []
+        b = e.get("bateria") or {}
+        if b.get("soc") is not None:
+            corr = b.get("corrente_a") or 0
+            partes.append(f"bateria {b['soc']}% ({b.get('tensao_v', 0):.1f} V, {'descarregando' if corr < 0 else 'carregando'}"
+                          f", saúde {b.get('soh', '?')}%, {b.get('ciclos', '?')} ciclos)")
+        js = (e.get("corpo") or {}).get("juntas") or []
+        grupos = {"pernas": range(0, 12), "cintura": range(12, 15), "braço esquerdo": range(15, 22),
+                  "braço direito": range(22, 29)}
+        temps = []
+        for nome, idx in grupos.items():
+            ts = [(max(js[i].get("temp") or [0]), js[i].get("nome", str(i))) for i in idx if i < len(js)]
+            if ts:
+                tmax, quem = max(ts)
+                temps.append(f"{nome} até {tmax:.0f} °C ({quem})")
+        if temps:
+            partes.append("motores: " + "; ".join(temps))
+        mt = [max(j.get("temp") or [0]) for lado in ("mao_left", "mao_right") for j in (e.get(lado) or {}).get("juntas", [])]
+        if mt:
+            partes.append(f"mãos até {max(mt):.0f} °C")
+        jt = ((e.get("jetson") or {}).get("temperaturas") or {}).get("CPU")
+        if jt:
+            partes.append(f"computador interno {jt:.0f} °C")
+        rpy = ((e.get("corpo") or {}).get("imu") or {}).get("rpy_graus")
+        if rpy:
+            partes.append(f"inclinação do corpo: {rpy[0]:+.1f}° de lado, {rpy[1]:+.1f}° para frente/trás")
+        pan = e.get("panico") or {}
+        if pan.get("panico"):
+            partes.append("braços TRAVADOS pela segurança (" + (pan.get("motivo") or "pânico") + ")")
+        else:
+            partes.append("trava de segurança liberada")
+        if e.get("modo"):
+            partes.append(f"modo de locomoção: {e['modo']}")
+        cams = ((e.get("cameras") or {}).get("p5555") or {})
+        ok = [n for n, c in cams.items() if isinstance(c, dict) and (c.get("fps") or 0) > 5]
+        if cams:
+            partes.append(f"câmeras funcionando: {len(ok)} de {len(cams)}")
+        partes.append("modelo de manipulação (WLA) " + ("ligado" if self.wla_online() else "desligado"))
+        return "Seu estado agora: " + "; ".join(partes) + "."
+
     VISAO = re.compile(r"vend|\bv[eê]\b|v[eê]s\b|olh|mesa|objeto|\bcor\b|cores|\btem\b|m[aã]o|frente|onde|qual|"
                        r"caneca|copo|ma[çc][aã]|coador|chaleira|pote|isso|aquilo|segur|enxerg|cena|c[aâ]mera", re.IGNORECASE)
     PERGUNTA_TAREFA = re.compile(r"(sabe|consegue|pode|capaz).{0,25}(fazer|pegar|ajudar)|o que (você|vc) faz|"
@@ -306,9 +363,12 @@ class Orquestrador:
             tarefas = (f"As únicas tarefas que você sabe fazer com as mãos: {'; '.join(PT[h] for h in HABILIDADES)}.\n"
                        if self.PERGUNTA_TAREFA.search(texto) else "")
             conversa = "".join(f"Usuário: {u}\nPrometheus: {r_}\n" for u, r_ in self.historico[-self.a.memoria:])
+            estado = (self.status_robo() + " Fale do seu estado só no que foi perguntado, em palavras simples "
+                      "(sem ler a lista inteira).\n") if self.STATUS.search(texto) else ""
             q = ("Você é o Prometheus, um robô humanoide criado pela equipe do LCAD (Laboratório de Computação de Alto "
                  "Desempenho) da UFES. Você fala português do Brasil, sempre em primeira pessoa, com frases curtas e "
-                 "simpáticas, e responde exatamente ao que perguntaram.\n" + cena + tarefas +
+                 "simpáticas, e responde exatamente ao que perguntaram.\n" + self.relogio() + "\n" + estado + cena +
+                 tarefas +
                  "Exemplos de conversa:\n"
                  "Usuário: Boa tarde!\nPrometheus: Boa tarde! Tudo bem com você?\n"
                  "Usuário: Quem é você?\nPrometheus: Eu sou o Prometheus, um robô humanoide criado pela equipe do "
