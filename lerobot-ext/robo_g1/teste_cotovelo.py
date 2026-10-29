@@ -93,7 +93,9 @@ def monta_cmd(alvo_q: dict, estado: Estado, kp_braco, kd_braco, kp_punho, kd_pun
         kp, kd = (kp_yaw, kd_yaw) if i == CINTURA[0] else (kp_tronco, kd_tronco)
         if i == CINTURA[1] and kp_roll is not None:   # 27/10: roll mais macio (300/8 esquentou a 86 °C)
             kp, kd = kp_roll, kd_roll
-        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": 0.0}
+        # 29/10: roll/pitch recebem a compensação da gravidade do tronco + braços (o yaw não segura peso)
+        t = 0.0 if (tau is None or i == CINTURA[0]) else float(tau[i])
+        mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd, "tau": t}
     for i in BRACOS:
         kp, kd = (kp_punho, kd_punho) if i in PUNHOS else (kp_braco, kd_braco)
         mc[i] = {"mode": 1, "q": alvo_q[i], "dq": 0.0, "kp": kp, "kd": kd,

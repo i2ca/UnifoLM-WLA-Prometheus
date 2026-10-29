@@ -326,6 +326,12 @@ class Trava:
             dt = 0.0 if self.t_env is None else min(agora - self.t_env, 0.05)
             data = copy.deepcopy(data)
             mc = data.get("motor_cmd", [])
+            # 29/10: roll/pitch da cintura (13, 14) — o tau é a compensação da gravidade do tronco; até
+            # --tau-max-cintura (0 = zera, como era)
+            for i in (13, 14):
+                if i < len(mc):
+                    tc = self.a.tau_max_cintura
+                    mc[i]["tau"] = max(-tc, min(tc, float(mc[i].get("tau", 0.0))))
             for i in IDX_LIMITADOS:
                 if i >= len(mc) or int(mc[i].get("mode", 0)) != 1:
                     continue
@@ -921,6 +927,8 @@ def main():
     parser.add_argument("--tau-max-braco", type=float, default=0.0,
                         help="Nm: teto do tau (compensação da gravidade) de ombro/cotovelo vindo do PC; 0 = zera")
     parser.add_argument("--tau-max-punho", type=float, default=0.0, help="Nm: idem para os punhos")
+    parser.add_argument("--tau-max-cintura", type=float, default=0.0,
+                        help="29/10: Nm, teto da compensação da gravidade no roll/pitch da cintura (0 = zera)")
     parser.add_argument("--vel-mao", type=float, default=1.0, help="rad/s máx. dos dedos Dex3")
     parser.add_argument("--kp-mao", type=float, default=1.0, help="teto de kp dos dedos Dex3")
     parser.add_argument("--gpio-entrada", default="PCC.03", help="GPIO6 da Unitree (pino 130 do NX)")

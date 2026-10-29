@@ -251,6 +251,9 @@ def main():
     ap.add_argument("--gravidade", type=float, default=1.0,
                     help="compensação da GRAVIDADE dos braços (fator do torque do modelo do G1, 0 desliga; 02/10, como "
                          "o gravity_compensation do LeRobot). A ponte só deixa passar com TAU_MAX_* > 0 no init")
+    ap.add_argument("--gravidade-cintura", type=float, default=1.0,
+                    help="29/10: compensação da gravidade no ROLL/PITCH da cintura (tronco + braços), fator; 0 desliga. "
+                         "A ponte limita a TAU_MAX_CINTURA do init")
     ap.add_argument("--massa-punho", type=float, default=0.15,
                     help="kg no punho fora do URDF (D435 + suporte), para a compensação da gravidade")
     ap.add_argument("--zona-morta-cm", type=float, nargs=2, default=[0.0, 0.0], metavar=("ESQ", "DIR"),
@@ -503,6 +506,14 @@ def main():
         cr, sr, cp, sp = np.cos(r), np.sin(r), np.cos(p_), np.sin(p_)
         g = np.array([[cp, sp * sr, sp * cr], [0, cr, -sr], [-sp, cp * sr, cp * cr]]).T @ np.array([0, 0, -9.81])
         tau = a.gravidade * fk.gravidade(q, g, extra_punho)
+        if a.gravidade_cintura > 0:
+            # 29/10: o ROLL/PITCH da cintura seguram o tronco + os dois braços (validado no robô parado na pose de
+            # gravação: roll -7,1 calculado x -7,5 Nm medido; pitch -7,9 x -7,5). Sem isso o tronco cedia para o lado.
+            for i in (12, 13, 14):
+                q[i] = alvo[i]
+            for i, t in fk.gravidade_cintura(q, g, extra_punho).items():
+                if i in (13, 14):
+                    tau[i] = a.gravidade_cintura * t
         for i in a.juntas_travadas:   # junta travada (punho esquerdo danificado) não faz força
             tau[i] = 0.0
         return tau
