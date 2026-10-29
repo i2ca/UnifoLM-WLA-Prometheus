@@ -45,8 +45,8 @@ def _distancia(a, b):
 
 
 # o que o Whisper já escreveu no lugar de "Prometheus" (log de 28/10), só no COMEÇO da frase
-APELIDOS = re.compile(r"^\W*((o|ô|oi|ei)\s+)?(o\s+)?(meteoro|prometeo|promete\s+os|prometi\s+us|pro\s+meteus|metheus|meteus)\b[\s,.!?:;-]*",
-                      re.IGNORECASE)
+APELIDOS = re.compile(r"^\W*((o|ô|oi|ei|bom|bem)[\s,]+)?(o\s+)?(meteoro|prometeo|promete\s+os|prometi\s+us|pro\s+meteus|"
+                      r"metheus|meteus|matheus|mateus)\b[\s,.!?:;-]*", re.IGNORECASE)
 INTERJ = {"o", "oi", "ei", "hey", "ola", "e"}
 
 

@@ -427,12 +427,32 @@ class Orquestrador:
             self.diz("sistema", f"ER-1 indisponível: {e}")
 
     # ── objetivo: planejar + executar ──
+    # 29/10: pela VOZ, uma ordem = UMA tarefa (pelas palavras; o ER-1 só se elas não bastarem)
+    TAREFA_VOZ = [
+        (re.compile(r"coador|filtro|coar", re.IGNORECASE), "Place the white mug under the coffee strainer."),
+        (re.compile(r"ma[çc][aã]|fruta", re.IGNORECASE), "Pick up the apple."),
+        (re.compile(r"caneca|copo|colo\b|x[ií]cara|xicara", re.IGNORECASE), "Pick up the white mug."),
+    ]
+
+    def tarefa_unica(self, texto):
+        for padrao, h in self.TAREFA_VOZ:
+            if padrao.search(texto):
+                return h
+        return None
+
     def objetivo(self, texto, voz=False):
         if self.rodando:
             self.diz("sistema", "já estou executando um objetivo — aperte PARAR primeiro")
+            if voz:
+                self.fala("Já estou fazendo uma tarefa. Diga para, se quiser que eu pare.", "plano")
             return
         self.diz("você", f"🎯 objetivo: {texto}")
+        unica = self.tarefa_unica(texto) if voz else None
+        if unica:
+            return self._pede_confirmacao([unica], voz)
         lista = "\n".join(f"{i}. {h}" for i, h in enumerate(HABILIDADES, 1))
+        if voz:   # uma ordem falada = UMA tarefa
+            lista += "\n\nThe user gave ONE spoken order: choose EXACTLY ONE skill."
         q = (f"You control a humanoid robot that can ONLY perform these skills, one at a time:\n{lista}\n\n"
              f'Goal (from the user, in Portuguese): "{texto}"\n'
              "Look at the image. Which skills, in which order, achieve the goal? Answer first with a JSON list of "
@@ -454,12 +474,19 @@ class Orquestrador:
         if len(plano) > 4:
             self.diz("sistema", f"plano com {len(plano)} etapas: o limite é 4 — não vou executar")
             return
+        if voz:
+            plano = plano[:1]
+        return self._pede_confirmacao(plano, voz)
+
+    def _pede_confirmacao(self, plano, voz=False):
         self.pendente, self.pendente_t = plano, time.time()
-        self.diz("sistema", "⚠️ nada foi mandado ao robô. Confira o plano: com o robô LIBERADO, aperte CONFIRMAR "
-                            "em até 60 s para executar.", pendente=True)
+        self.diz("sistema", f"tarefa: {' → '.join(PT[p] for p in plano)}" + (" (uma ordem falada = uma tarefa)" if voz else ""))
+        self.diz("sistema", "⚠️ nada foi mandado ao robô ainda: " + ("diga 'sim' (ou aperte CONFIRMAR) em até "
+                            f"{self.a.sim_s:.0f} s" if voz and (self.voz_liberada() or self.esta_liberado()) else
+                            "com o robô LIBERADO, aperte CONFIRMAR em até 60 s para executar."), pendente=True)
         # o robô fala o plano ANTES de fazer qualquer coisa e pede a confirmação
         etapas = ", depois ".join(PT[p] for p in plano)
-        if voz and self.voz_liberada():
+        if voz and (self.voz_liberada() or self.esta_liberado()):
             # 29/10: confirmação FALADA: o ouvido aceita a resposta sem "Prometheus" por --sim-s
             self.fala(f"Meu plano é {etapas}. Posso começar? Diga sim.", "plano")
             self.aguarda_sim_ate = time.time() + self.a.sim_s
