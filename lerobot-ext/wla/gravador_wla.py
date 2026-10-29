@@ -6,6 +6,7 @@
         NNNN_cabeca.jpg             a imagem de cabeça que o MODELO recebeu (ZED esq., 640x480)
         NNNN_punho_esq.jpg          idem, punhos (se foram)
         NNNN_punho_dir.jpg
+        NNNN_cabeca_dir.jpg         o olho DIREITO da ZED (29/10: o servidor do v7 calcula a profundidade com ele)
         NNNN_traj.jpg               trajetória prevista das duas mãos (de cima e de lado)
         NNNN.npz                    tudo em número: o trecho inteiro da IA (30 passos, todas as chaves),
                                     juntas medidas, juntas comandadas, pose das mãos, garras
@@ -32,7 +33,8 @@ def garra_equivalente(a, lado):
 
 
 IMAGENS = {"observation.images.cam_left_high": "cabeca", "observation.images.cam_left_wrist": "punho_esq",
-           "observation.images.cam_right_wrist": "punho_dir"}
+           "observation.images.cam_right_wrist": "punho_dir",
+           "observation.images.head_stereo_right": "cabeca_dir"}   # 29/10: o olho direito (profundidade do v7)
 
 
 class Gravador:

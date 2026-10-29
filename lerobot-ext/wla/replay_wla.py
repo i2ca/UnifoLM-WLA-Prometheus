@@ -87,6 +87,8 @@ def reinferir(pasta, L, url, frase, so_cabeca, rotulo):
                "observation.state.right_gripper": z["garras"][1:].astype(np.float32),
                "observation.state.lower_body": z["q_medido"][:15].astype(np.float32),
                "instruction": frase or x["frase"]}
+        if (pasta / f"{n}_cabeca_dir.jpg").exists():   # 29/10: olho direito -> profundidade (v7)
+            obs["observation.images.head_stereo_right"] = cv2.imread(str(pasta / f"{n}_cabeca_dir.jpg"))
         if not so_cabeca and (pasta / f"{n}_punho_esq.jpg").exists() and (pasta / f"{n}_punho_dir.jpg").exists():
             obs["observation.images.cam_left_wrist"] = cv2.imread(str(pasta / f"{n}_punho_esq.jpg"))
             obs["observation.images.cam_right_wrist"] = cv2.imread(str(pasta / f"{n}_punho_dir.jpg"))
@@ -114,7 +116,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pasta", nargs="?")
     ap.add_argument("--reinferir", action="store_true")
-    ap.add_argument("--servidor", default="ws://127.0.0.1:8600")
+    ap.add_argument("--servidor", default="ws://127.0.0.1:8601")
     ap.add_argument("--frase", default=None)
     ap.add_argument("--so-cabeca", action="store_true")
     a = ap.parse_args()
