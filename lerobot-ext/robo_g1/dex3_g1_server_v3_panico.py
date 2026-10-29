@@ -313,7 +313,9 @@ class Trava:
                 cr, sr, cp, sp = np.cos(r), np.sin(r), np.cos(p), np.sin(p)
                 g = np.array([[cp, sp * sr, sp * cr], [0, cr, -sr], [-sp, cp * sr, cp * cr]]).T @ np.array([0, 0, -9.81])
                 t = fk.gravidade_cintura(q, g, extra)
-                self._tw = {i: self.a.gravidade_cintura * t[i] for i in (13, 14)}
+                # 29/10: no ROLL a compensação brigava com o equilíbrio da Unitree (4-6 Nm e 59 -> 76 °C em 24 s,
+                # enquanto o pitch segurava 15 Nm a 53 °C) -> roll com fator próprio (padrão 0 = sem tau)
+                self._tw = {13: self.a.gravidade_cintura_roll * t[13], 14: self.a.gravidade_cintura * t[14]}
             except Exception as e:  # noqa: BLE001
                 if not erro:
                     print(f"[Pânico] ⚠️ gravidade da cintura falhou ({e}) — tau 0", flush=True)
@@ -983,6 +985,9 @@ def main():
     parser.add_argument("--tau-max-punho", type=float, default=0.0, help="Nm: idem para os punhos")
     parser.add_argument("--tau-max-cintura", type=float, default=0.0,
                         help="29/10: Nm, teto da compensação da gravidade no roll/pitch da cintura (0 = zera)")
+    parser.add_argument("--gravidade-cintura-roll", type=float, default=0.0,
+                        help="29/10: fator da compensação no ROLL (0 = roll sem tau, só o kp; o pitch usa "
+                             "--gravidade-cintura)")
     parser.add_argument("--gravidade-cintura", type=float, default=0.0,
                         help="29/10: fator da compensação da gravidade da cintura CALCULADA NA PONTE (0 = usa o tau "
                              "que o PC mandar, limitado)")

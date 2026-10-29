@@ -21,7 +21,8 @@ KP_BRACO=80       # 02/10: 80 = o mesmo da teleoperação/gravação (com 40 o b
 KP_PUNHO=40       # 02/10: 40 = o mesmo da gravação.  teto de kp de punho (a classe manda 40). Era 10: o punho não segurava o pitch com o braço esticado (29/09)
 TAU_MAX_BRACO=10  # 02/10: Nm, teto da compensação da GRAVIDADE que o executor manda (ombro/cotovelo); 0 = desliga
 TAU_MAX_PUNHO=3   # 02/10: Nm, idem nos punhos
-GRAVIDADE_CINTURA=1.0  # 29/10: compensação da gravidade do ROLL/PITCH da cintura calculada AQUI na ponte (0 = desliga)
+GRAVIDADE_CINTURA=1.0  # 29/10: compensação da gravidade do PITCH da cintura calculada AQUI na ponte (0 = desliga)
+GRAVIDADE_CINTURA_ROLL=0  # 29/10: idem no ROLL — 0: no roll ela brigava com o equilíbrio da Unitree e esquentava (81 °C)
 TAU_MAX_CINTURA=15  # 29/10: Nm, teto da compensação da gravidade no ROLL/PITCH da cintura (medido ~7,5 com o braço direito esticado); 0 = desliga
 VEL_MAO=5.0       # rad/s máx. dos dedos Dex3. Era 1,0 (padrão da v3): a mão levava ~1,5 s para fechar (30/09)
 VOLUME=100        # volume da fala "Warning. Pose locked."
@@ -108,7 +109,7 @@ sleep 1
 # 5. Inicia o Servidor da Mão + Corpo (Dex3 Bridge) em background (&)
 if [ "$USE_PANICO" = "true" ]; then
     PONTE=$PROJECT_DIR/dex3_g1_server_v3_panico.py
-    EXTRA="--vel-braco $VEL_BRACO --kp-braco $KP_BRACO --kp-punho $KP_PUNHO --tau-max-braco $TAU_MAX_BRACO --tau-max-punho $TAU_MAX_PUNHO --tau-max-cintura $TAU_MAX_CINTURA --gravidade-cintura $GRAVIDADE_CINTURA --vel-mao $VEL_MAO --volume $VOLUME --volume-bip $VOLUME_BIP"
+    EXTRA="--vel-braco $VEL_BRACO --kp-braco $KP_BRACO --kp-punho $KP_PUNHO --tau-max-braco $TAU_MAX_BRACO --tau-max-punho $TAU_MAX_PUNHO --tau-max-cintura $TAU_MAX_CINTURA --gravidade-cintura $GRAVIDADE_CINTURA --gravidade-cintura-roll ${GRAVIDADE_CINTURA_ROLL:-0} --vel-mao $VEL_MAO --volume $VOLUME --volume-bip $VOLUME_BIP"
     [ "$BRACO_ESQ_TRAVADO" = "true" ] && EXTRA="$EXTRA --braco-esq-travado"
     NOME="v3 (PÂNICO GPIO4/GPIO6)$([ "$BRACO_ESQ_TRAVADO" = "true" ] && echo ' + braço/mão ESQUERDOS travados')"
 else
