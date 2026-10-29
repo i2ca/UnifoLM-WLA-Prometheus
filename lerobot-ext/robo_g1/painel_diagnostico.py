@@ -298,8 +298,9 @@ class PoseInicial:
         mc = [{"mode": 0, "q": 0.0, "dq": 0.0, "kp": 0.0, "kd": 0.0, "tau": 0.0} for _ in range(35)]
         for i in CINTURA:
             mc[i] = {"mode": 1, "q": q[i], "dq": 0.0, "kp": 300.0, "kd": 3.0, "tau": 0.0}   # 29/10: 300/3 = o kp_high do xr_teleoperate da Unitree (kd 8 fazia o motor "tremer" a corrente)
-        # 29/10: o roll volta ao 300/3 da Unitree (era 100/4: o tronco pendia ~4° para o lado); a ponte soma a
-        # gravidade da cintura (tau) — o kp só corrige o resto
+        # 29/10: roll 150/3 (100/4 pendia ~4° para o lado; 300/3 brigava e esquentava): a ponte soma a gravidade da
+        # cintura (tau) e o kp só corrige o resto
+        mc[CINTURA[1]]["kp"], mc[CINTURA[1]]["kd"] = 150.0, 3.0
         for i in BRACOS:
             kp, kd = (40.0, 1.5) if i in PUNHOS else (80.0, 3.0)   # a ponte corta para os tetos dela
             if i in JUNTAS_SOLTAS:
