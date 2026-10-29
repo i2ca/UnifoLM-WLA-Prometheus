@@ -264,7 +264,7 @@ class Trava:
         self.congelado = None
         self.mao_congelada = {}
         self.esq_fixo = {}        # 29/10: pose do braço esquerdo travado (--braco-esq-travado)
-        self._tw, self._q_cmd, self._tw_thread = {}, {}, None   # 29/10: gravidade da cintura (thread própria)
+        self._tw, self._tw_thread = {}, None   # 29/10: gravidade da cintura (thread própria)
         self.rodando = True
         self.n_descartados = 0
         self.alerta = None
@@ -277,12 +277,10 @@ class Trava:
         self.maos[lado] = msg
 
     def _tau_cintura(self, mc):
-        """29/10: torque da gravidade no roll/pitch da cintura. O repasse só GUARDA a pose comandada e LÊ o último
-        valor; a conta (fk_g1.gravidade_cintura: tronco + cabeça + os dois braços na pose comandada, gravidade pela
+        """29/10: torque da gravidade no roll/pitch da cintura. O repasse só LÊ o último valor; a conta
+        (fk_g1.gravidade_cintura: tronco + cabeça + os dois braços na pose MEDIDA, gravidade pela
         IMU; ~1,1 ms no robô) roda numa thread a cada 50 ms, sem atrasar os comandos. Validado no robô parado:
         roll -7,1 calculado x -7,5 Nm medido; pitch -7,9 x -7,5."""
-        self._q_cmd = {i: float(mc[i].get("q", 0.0)) for i in range(12, min(29, len(mc)))
-                       if int(mc[i].get("mode", 0)) == 1}
         if self._tw_thread is None:
             self._tw_thread = threading.Thread(target=self._laco_cintura, daemon=True, name="gravidade_cintura")
             self._tw_thread.start()
@@ -308,9 +306,9 @@ class Trava:
             if low is None:
                 continue
             try:
+                # 29/10: pose MEDIDA (a real). Com a comandada, o braço esquerdo travado embaixo entrava "levantado"
+                # (o painel manda a pose de gravação nos dois) e a conta dava roll ~0 e pitch dobrado
                 q = np.array([float(low.motor_state[i].q) for i in range(29)])
-                for i, v in dict(self._q_cmd).items():   # pose COMANDADA (como a dos braços no executor)
-                    q[i] = v
                 r, p = float(low.imu_state.rpy[0]), float(low.imu_state.rpy[1])
                 cr, sr, cp, sp = np.cos(r), np.sin(r), np.cos(p), np.sin(p)
                 g = np.array([[cp, sp * sr, sp * cr], [0, cr, -sr], [-sp, cp * sr, cp * cr]]).T @ np.array([0, 0, -9.81])
