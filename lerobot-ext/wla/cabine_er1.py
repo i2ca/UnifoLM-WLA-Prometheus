@@ -73,6 +73,10 @@ class Orquestrador:
         self.liberado, self.liberado_t = False, 0.0    # chave "robô liberado" (trava sozinha)
         # 28/10: VOZ — "Prometheus, ..." pelo microfone do robô (ouvido_g1.py) e a luz do rosto pelo painel
         self.led_base = (0, 0, 0)                      # a cor "de descanso" (muda por voz: "muda a luz para azul")
+        # 29/10: EXECUTAR POR VOZ — só com a chave "🎤 voz pode executar" (trava sozinha em 10 min); o plano falado
+        # espera um "sim" falado (sem precisar de "Prometheus") por --sim-s segundos
+        self.voz_executa, self.voz_executa_t = False, 0.0
+        self.aguarda_sim_ate = 0.0
         self.ouvido = None
         if getattr(a, "ouvido", 0):
             from ouvido_g1 import Ouvido
@@ -144,6 +148,10 @@ class Orquestrador:
              "rox": ((150, 0, 255), "roxa"), "lilás": ((200, 120, 255), "lilás"), "rosa": ((255, 60, 150), "rosa"),
              "branc": ((255, 255, 255), "branca"), "ciano": ((0, 220, 255), "ciano"),
              "turquesa": ((0, 220, 180), "turquesa")}
+    PARA_VOZ = re.compile(r"^\W*(para|pare|parar|stop|chega|espera)\b", re.IGNORECASE)
+    SIM_VOZ = re.compile(r"^\W*(sim|pode|pode sim|pode começar|isso|confirmo|confirma|vai|claro|ok|beleza)\b",
+                         re.IGNORECASE)
+    NAO_VOZ = re.compile(r"^\W*(n[aã]o|cancela|deixa|nada)\b", re.IGNORECASE)
     LUZ = re.compile(r"\b(luz|led|cor|olhos?|rosto)\b", re.IGNORECASE)
 
     def led(self, rgb):
@@ -165,9 +173,26 @@ class Orquestrador:
     def voz_pergunta(self, texto):
         """Ouviu "Prometheus, <texto>": pergunta de luz é resolvida aqui; o resto vai para a conversa (uma ORDEM vira
         PLANO e precisa de CONFIRMAR na tela, como digitada — a voz não libera nada)."""
+        t = texto.lower().strip(" .,!?")
+        if self.PARA_VOZ.match(t):   # PARAR pela voz: na hora, sem confirmar
+            self.diz("você", f"🎤 {texto}")
+            self.parar()
+            self.aguarda_sim_ate = 0.0
+            self.fala("Parei.", "voz")
+            return
+        if time.time() < self.aguarda_sim_ate:
+            if self.SIM_VOZ.match(t):
+                self.aguarda_sim_ate = 0.0
+                self.diz("você", f"🎤 {texto}")
+                self.confirma(voz=True)
+                return
+            if self.NAO_VOZ.match(t):
+                self.aguarda_sim_ate, self.pendente = 0.0, None
+                self.diz("você", f"🎤 {texto}")
+                self.fala("Tudo bem, não vou fazer.", "voz")
+                return
         if self.a.led_voz:
             self.led((150, 0, 255))   # pensando
-        t = texto.lower()
         if self.LUZ.search(t):
             if re.search(r"\b(apag|deslig)", t):
                 self.led_base = (0, 0, 0)
@@ -219,6 +244,16 @@ class Orquestrador:
     def libera(self, sim):
         self.liberado, self.liberado_t = bool(sim), time.time()
         self.diz("sistema", "🔓 robô LIBERADO para executar planos confirmados" if sim else "🔒 robô TRAVADO")
+
+    def libera_voz(self, sim):
+        self.voz_executa, self.voz_executa_t = bool(sim), time.time()
+        self.diz("sistema", "🎤🔓 a VOZ pode executar: diga 'Prometheus, <tarefa>' e confirme com 'sim'" if sim
+                 else "🎤🔒 a voz NÃO executa mais (só conversa)")
+
+    def voz_liberada(self):
+        if self.voz_executa and time.time() - self.voz_executa_t > 600:
+            self.libera_voz(False)
+        return self.voz_executa
 
     def esta_liberado(self):
         if self.liberado and time.time() - self.liberado_t > 600:
@@ -349,7 +384,7 @@ class Orquestrador:
             self.diz("sistema", "🎤 ouvi pela voz do robô", fino=True)
         if self.COMANDO.match(texto):   # ordem ("coloca o copo no coador"): vira PLANO (nada vai ao robô sem CONFIRMAR)
             print("[sistema] ordem no chat: vira plano (nada vai ao robô sem CONFIRMAR)", flush=True)
-            return self.objetivo(texto)
+            return self.objetivo(texto, voz=voz)
         self.diz("você", texto)
         try:
             # 28/10: prompt CURTO com EXEMPLOS (o ER-1 é pequeno: com listas e regras longas ele respondia "Bom dia!"
@@ -392,7 +427,7 @@ class Orquestrador:
             self.diz("sistema", f"ER-1 indisponível: {e}")
 
     # ── objetivo: planejar + executar ──
-    def objetivo(self, texto):
+    def objetivo(self, texto, voz=False):
         if self.rodando:
             self.diz("sistema", "já estou executando um objetivo — aperte PARAR primeiro")
             return
@@ -424,9 +459,17 @@ class Orquestrador:
                             "em até 60 s para executar.", pendente=True)
         # o robô fala o plano ANTES de fazer qualquer coisa e pede a confirmação
         etapas = ", depois ".join(PT[p] for p in plano)
-        self.fala(f"Meu plano é {etapas}. Posso começar? Confirme na tela.", "plano")
+        if voz and self.voz_liberada():
+            # 29/10: confirmação FALADA: o ouvido aceita a resposta sem "Prometheus" por --sim-s
+            self.fala(f"Meu plano é {etapas}. Posso começar? Diga sim.", "plano")
+            self.aguarda_sim_ate = time.time() + self.a.sim_s
+            if self.ouvido is not None:
+                self.ouvido._acordado_ate = self.aguarda_sim_ate
+        else:
+            self.fala(f"Meu plano é {etapas}. Posso começar? Confirme na tela.", "plano")
 
-    def confirma(self):
+    def confirma(self, voz=False):
+        liberado = self.esta_liberado() or (voz and self.voz_liberada())
         if self.retry is not None:   # confirmação da 2ª tentativa
             if not self.esta_liberado():
                 self.diz("sistema", "🔒 o robô está TRAVADO: ligue a chave 'robô liberado' para tentar de novo")
@@ -438,8 +481,11 @@ class Orquestrador:
             self.pendente = None
             self.diz("sistema", "não há plano para confirmar (ou passou de 60 s) — peça o objetivo de novo")
             return
-        if not self.esta_liberado():
-            self.diz("sistema", "🔒 o robô está TRAVADO: ligue a chave 'robô liberado' antes de confirmar")
+        if not liberado:
+            self.diz("sistema", "🔒 o robô está TRAVADO: ligue a chave 'robô liberado' (ou '🎤 voz pode executar') "
+                                "antes de confirmar")
+            if voz:
+                self.fala("Não posso começar: a execução por voz está travada na cabine.", "plano")
             return
         if self.rodando:
             self.diz("sistema", "já estou executando — aperte PARAR primeiro")
@@ -455,11 +501,13 @@ class Orquestrador:
         if not ativo:
             self.diz("sistema", "não vou executar: a cabine do robô está SEM o 'terminou?' do ER-1. Suba ela com "
                                 "TERMINOU=1 (quem checa é o executor, sem atrasar o WLA)")
+            if voz:
+                self.fala("Não posso começar: o executor está sem a verificação de término.", "plano")
             return
         self.pendente = None
         self.plano, self.passo, self.rodando = plano, -1, True
         self.cancela.clear()
-        self.diz("você", "✔ CONFIRMAR plano")
+        self.diz("você", "✔ CONFIRMAR plano" + (" (pela voz)" if voz else ""))
         self.fala("Confirmado. Começando.", "plano")
         threading.Thread(target=self._executa, daemon=True).start()
 
@@ -621,6 +669,7 @@ button.conf{background:#d98e04}button:disabled{opacity:.35;cursor:not-allowed}
 <button type="button" class="parar" id="parar">⏹ PARAR</button>
 <button type="button" id="reset" title="apaga a memória da conversa e limpa o chat">🧹 Novo contexto</button></div>
 <div class="barra"><label class="chave" title="fale 'Prometheus, ...' perto do robô"><input type="checkbox" id="ouv"> 🎤 ouvir "Prometheus"</label>
+<label class="chave" title="uma ordem falada vira plano e o robô executa depois do seu 'sim' falado (trava em 10 min)"><input type="checkbox" id="vozexe"> 🎤 voz pode executar</label>
 <label class="chave">luz do rosto <input type="color" id="cor" value="#000000" style="width:42px;height:28px"></label>
 <span id="ouviu" class="t"></span></div></section></main>
 <script>
@@ -637,6 +686,7 @@ document.getElementById("falar").onclick = () => { const t = txt.value.trim(); i
 document.getElementById("lib").onchange = e => post("/libera", {sim: e.target.checked});
 document.getElementById("conf").onclick = () => { if(confirm("Executar no robô?")) post("/confirma"); };
 document.getElementById("ouv").onchange = e => post("/ouvido", {sim: e.target.checked});
+document.getElementById("vozexe").onchange = e => post("/libera_voz", {sim: e.target.checked});
 document.getElementById("cor").onchange = e => post("/led", {cor: e.target.value});
 async function atualiza(){
   try{
@@ -648,6 +698,7 @@ async function atualiza(){
     document.getElementById("hab").textContent = "O WLA sabe: " + e.habilidades.join(" · ");
     const ov = e.ouvido;
     document.getElementById("ouv").checked = !!(ov && ov.ligado);
+    document.getElementById("vozexe").checked = !!e.voz_executa;
     document.getElementById("ouv").disabled = !ov;
     document.getElementById("ouviu").textContent = !ov ? "(ouvido desligado: --ouvido 1)" : !ov.pronto ? "carregando o Whisper..." :
       (ov.pacotes ? "" : "⚠️ sem áudio do microfone (painel do robô liga) · ") + (ov.ultimo ? "última fala: " + ov.ultimo : "");
@@ -683,6 +734,7 @@ def main():
     ap.add_argument("--volta-s", type=float, default=10.0, help="segundos esperando voltar à pose inicial")
     ap.add_argument("--max-tokens", type=int, default=200)
     ap.add_argument("--ouvido", type=int, default=1, help="1 = ouve 'Prometheus, ...' pelo microfone do robô (Whisper)")
+    ap.add_argument("--sim-s", type=float, default=25.0, help="segundos esperando o 'sim' falado depois do plano")
     ap.add_argument("--ouvir-ao-iniciar", type=int, default=0, help="1 = já começa ouvindo 'Prometheus' (padrão: "
                     "desligado, liga na chave da página)")
     ap.add_argument("--ip-local", default="192.168.123.165", help="IP da PGX na rede do robô (multicast do microfone)")
@@ -710,7 +762,7 @@ def main():
                 return self._json({"msgs": msgs, "rodando": o.rodando, "passo": o.passo,
                                    "plano": [PT[p] for p in o.plano], "habilidades": [PT[h] for h in HABILIDADES],
                                    "pendente": pend, "liberado": o.esta_liberado(), "retry": o.retry is not None,
-                                   "wla": o.wla_online(),
+                                   "wla": o.wla_online(), "voz_executa": o.voz_liberada(),
                                    "ouvido": None if o.ouvido is None else {
                                        "ligado": o.ouvido.ligado, "pronto": o.ouvido.pronto(), "pacotes": o.ouvido.pacotes,
                                        "ultimo": ("✅ " if o.ouvido.ultimo["ativou"] else "· ") + o.ouvido.ultimo["texto"]
@@ -759,6 +811,8 @@ def main():
             elif self.path == "/ouvido" and o.ouvido is not None:
                 o.ouvido.ligado = bool(corpo.get("sim"))
                 o.diz("sistema", "🎤 ouvindo 'Prometheus'" if o.ouvido.ligado else "🎤 ouvido desligado")
+            elif self.path == "/libera_voz":
+                o.libera_voz(bool(corpo.get("sim")))
             elif self.path == "/led":
                 c = (corpo.get("cor") or "#000000").lstrip("#")
                 o.led_base = tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
