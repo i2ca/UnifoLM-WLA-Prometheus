@@ -260,17 +260,18 @@ def main():
                     help="cm: se o modelo pede a mão a menos disto do ponto SEGURADO, ela fica parada (0 desliga). "
                          "02/10 (rodada 131051): o modelo pede a mão esquerda ~1 cm abaixo da MEDIDA a cada consulta; "
                          "ancorado na medida isso somava e o braço descia 35 cm em 25 s, sem o integrador agir")
-    ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
+    ap.add_argument("--kp-tronco", type=float, nargs=2, default=[300.0, 3.0], metavar=("KP", "KD"),
                     help="roll e pitch da cintura (alvo 0 = coluna reta, como na gravação). 02/10: com 150/5 o pitch "
                          "ficava 0,08-0,16 rad à frente e o roll/pitch esquentou até a cintura ceder; a gravação usou 300/8")
     ap.add_argument("--temp-tronco", type=float, default=0.0,
                     help="°C: acima disto no roll/pitch da cintura PARA a tarefa e volta à posição inicial (mão aberta) "
                          "para esfriar; 0 = só avisa a partir de 60 °C (padrão: 27/10 o usuário pediu sem a proteção; "
                          "use --temp-tronco 75 para ligar)")
-    ap.add_argument("--kp-roll", type=float, nargs=2, default=[200.0, 6.0], metavar=("KP", "KD"),
+    ap.add_argument("--kp-roll", type=float, nargs=2, default=[300.0, 3.0], metavar=("KP", "KD"),
                     help="kp/kd do ROLL da cintura (o pitch segue --kp-tronco). 27/10: com 300/8 o roll esquentou a 86 °C "
                          "— ele quase não segura peso, e qualquer diferença do 'zero' virava força contínua; 29/10: com "
-                         "100/4 o tronco ficou mole e o robô quase caiu -> 200/6 (olhe a temperatura no log)")
+                         "100/4 o tronco ficou mole e o robô quase caiu -> 200/6; 29/10: os ganhos do xr_teleoperate da Unitree "
+                         "(cintura 300/3) + a gravidade da cintura calculada na ponte (olhe a temperatura no log)")
     ap.add_argument("--ki", type=float, default=1.5,
                     help="integrador por junta (1/s): corrige o braço que cede sob o peso até a junta MEDIDA chegar "
                          "onde a IK mandou (0 desliga)")
@@ -345,7 +346,7 @@ def main():
                     help="1/s: integrador no roll/pitch da cintura até o MEDIDO ficar reto (±0,12 rad). 27/10: DESLIGADO por "
                          "padrão — ligado, o roll/pitch ESQUENTOU: o equilíbrio da Unitree puxa o tronco para a frente e o "
                          "integrador brigava com ele. Sem ele o tronco cede ~3° com os braços esticados")
-    ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 8.0], metavar=("KP", "KD"),
+    ap.add_argument("--kp-yaw", type=float, nargs=2, default=[300.0, 3.0], metavar=("KP", "KD"),
                     help="kp/kd do yaw da cintura (descanso: 300/8; antes 150/5)")
     ap.add_argument("--cintura-yaw-max", type=float, default=0.6, help="rad: limite do giro do tronco (0,6 ≈ 34°; 02/10: era 0,35, e no dataset da maçã o tronco gira até 0,66)")
     ap.add_argument("--peso-rot-esq", type=float, default=0.03,
