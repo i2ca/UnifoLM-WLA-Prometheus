@@ -31,16 +31,35 @@ TXT = {
            "titulo": "Para onde a AÇÃO olha (atenção do DiT sobre o VLM)", "frase": "frase (cor = atenção)",
            "camadas": "camada do DiT", "parte": "parte da entrada", "acao": "ação: mão direita (prevista x demonstração)",
            "fecha": "mão fechada (0..1)", "pred": "prevista", "demo": "demonstração", "passo": "passo do trecho (30 = 1 s)",
-           "desloc": "deslocamento (cm)", "ep": "episódio de VALIDAÇÃO", "quadro": "quadro", "share": "atenção total"},
+           "desloc": "deslocamento (cm)", "ep": "episódio de VALIDAÇÃO", "quadro": "quadro", "share": "atenção total",
+           "desligada": "(desligada)", "da_atencao": "da atenção", "escala": "atenção da região (1× = média da câmera)",
+           "media": "(média)",
+           "rodape": "Mapa de calor: quanto os tokens de AÇÃO do DiT consultam cada região da imagem (saída do VLM), em vezes "
+                     "a média da câmera; círculos 1-5 = regiões mais consultadas; % = parcela da atenção total. Frase: "
+                     "cor = atenção de cada palavra. Matriz: atenção por camada do DiT e por parte da entrada (média dos "
+                     "4 passos do fluxo). Regiões de BORDA muito consultadas costumam ser tokens que o transformer usa como "
+                     "memória/registrador (Darcet et al., 2024) — onde a ação olha não é necessariamente de onde vem a "
+                     "informação; o teste de oclusão mede isso. Episódio de validação, nunca visto no treino.",
+           "card": "Episódio {i} de {n} — validação (nunca visto no treino)", "card2": "tarefa: {t}"},
     "en": {"cams": {"head_left": "head (ZED)", "head_depth": "depth", "cam_wrist_left": "left wrist",
                     "cam_wrist_right": "right wrist"},
            "cat": ["head", "depth", "wrist L", "wrist R", "instruction", "state", "other"],
            "titulo": "Where the ACTION looks (DiT attention over the VLM)", "frase": "instruction (color = attention)",
            "camadas": "DiT layer", "parte": "input part", "acao": "action: right hand (predicted vs demonstration)",
            "fecha": "hand closed (0..1)", "pred": "predicted", "demo": "demonstration", "passo": "chunk step (30 = 1 s)",
-           "desloc": "displacement (cm)", "ep": "VALIDATION episode", "quadro": "frame", "share": "total attention"},
+           "desloc": "displacement (cm)", "ep": "VALIDATION episode", "quadro": "frame", "share": "total attention",
+           "desligada": "(off)", "da_atencao": "of attention", "escala": "region attention (1× = camera mean)",
+           "media": "(mean)",
+           "rodape": "Heat map: how much the DiT ACTION tokens attend to each image region (VLM output), in multiples of "
+                     "the camera mean; circles 1-5 = most attended regions; % = share of total attention. Instruction: "
+                     "color = attention per word. Matrix: attention per DiT layer and input part (mean over the 4 flow "
+                     "steps). Highly attended BORDER regions are often tokens the transformer uses as memory/registers "
+                     "(Darcet et al., 2024) — where the action looks is not necessarily where the information comes "
+                     "from; the occlusion test measures that. Validation episode, never seen in training.",
+           "card": "Episode {i} of {n} — validation (never seen in training)", "card2": "task: {t}"},
 }
 PAPEIS = ["head_left", "head_depth", "cam_wrist_left", "cam_wrist_right"]
+ESCALA_X = 4.0   # o mapa vai de 0 a 4x a média da câmera (fixo em todos os quadros)
 
 
 class Espiao:
@@ -122,6 +141,8 @@ def main():
     ap.add_argument("--fps-video", type=int, default=10)
     ap.add_argument("--lingua", choices=["pt", "en"], default="pt")
     ap.add_argument("--saida", required=True)
+    ap.add_argument("--tarefa", default=None, help="só os datasets cujo nome contém isto (ex.: Pegar_Caneca)")
+    ap.add_argument("--video-unico", default=None, help="junta todos os episódios num vídeo só com este nome")
     a = ap.parse_args()
     T = TXT[a.lingua]
 
@@ -161,6 +182,8 @@ def main():
     escolhidos = []
     cum = np.array(ds._cum_lengths)
     for k, (td, d) in enumerate(zip(ds._task_dirs, ds._datasets)):
+        if a.tarefa and a.tarefa not in Path(td).name:
+            continue
         t = d.hf_dataset.data
         ep, fr = t.column("episode_index").to_numpy(), t.column("frame_index").to_numpy()
         for e in list(dict.fromkeys(ep.tolist()))[: a.episodios]:
@@ -171,7 +194,8 @@ def main():
     saida.mkdir(parents=True, exist_ok=True)
     cmap = plt.get_cmap("magma")
 
-    for nome_ds, ep, idx in escolhidos:
+    videos = []
+    for i_ep, (nome_ds, ep, idx) in enumerate(escolhidos, 1):
         pasta = saida / f"{nome_ds}_ep{ep}_{a.passo}_{a.lingua}"
         pasta.mkdir(exist_ok=True)
         hist_err = []
@@ -211,28 +235,40 @@ def main():
 
             fig = plt.figure(figsize=(19.2, 10.8), dpi=100, facecolor="#0f1115")
             gs = gridspec.GridSpec(3, 4, height_ratios=[1.25, 0.3, 1.05], hspace=0.42, wspace=0.22,
-                                   left=0.075, right=0.985, top=0.9, bottom=0.11)
+                                   left=0.075, right=0.94, top=0.9, bottom=0.15)
             frase_txt = b["task"][0]
             fig.text(0.03, 0.955, f"{T['titulo']}  —  WLA v7 @ {a.passo}", color="w", fontsize=20, weight="bold")
             fig.text(0.03, 0.925, f"{T['ep']}: {nome_ds} #{ep} | {T['quadro']} {q * a.passo_quadros} "
                      f"({q * a.passo_quadros / 30:.1f} s) | erro mão {err:.1f} cm", color="#bbb", fontsize=13)
-            # 1. câmeras
-            vmax = np.percentile(np.concatenate([media[p] for p, _ in cams.values()]), 99) if cams else 1
+            # 1. câmeras — escala FIXA: atenção de cada região / média da câmera (1x = média), 0..ESCALA_X
             for c, papel in enumerate(PAPEIS):
                 ax = fig.add_subplot(gs[0, c])
                 ax.axis("off")
                 img = item["images"].get(papel)
                 if img is None or papel not in cams:
-                    ax.set_title(f"{T['cams'][papel]} — (desligada)", color="#777", fontsize=13)
+                    ax.set_title(f"{T['cams'][papel]} — {T['desligada']}", color="#777", fontsize=13)
                     continue
                 rgb = (img.permute(1, 2, 0).numpy().clip(0, 1) * 255).astype(np.uint8)
                 p, (gh, gw) = cams[papel]
                 mapa = media[p].reshape(gh, gw)
-                calor = cv2.resize(np.clip(mapa / vmax, 0, 1).astype(np.float32), (rgb.shape[1], rgb.shape[0]),
+                rel = mapa / (mapa.mean() + 1e-12)
+                calor = cv2.resize(np.clip(rel / ESCALA_X, 0, 1).astype(np.float32), (rgb.shape[1], rgb.shape[0]),
                                    interpolation=cv2.INTER_CUBIC)
                 ax.imshow(rgb)
-                ax.imshow(calor, cmap="jet", alpha=0.42, vmin=0, vmax=1)
-                ax.set_title(f"{T['cams'][papel]} — {100 * float(cat[:, c].mean()):.0f}%", color="w", fontsize=14)
+                ax.imshow(calor, cmap="jet", alpha=0.45, vmin=0, vmax=1)
+                for r_, idx_ in enumerate(np.argsort(rel.ravel())[::-1][:5], 1):   # as 5 regiões mais consultadas
+                    cy, cx = divmod(int(idx_), gw)
+                    px, py = (cx + 0.5) * rgb.shape[1] / gw, (cy + 0.5) * rgb.shape[0] / gh
+                    ax.add_patch(plt.Circle((px, py), 0.06 * rgb.shape[1], fill=False, color="w", lw=2))
+                    ax.text(px, py, str(r_), color="w", fontsize=11, weight="bold", ha="center", va="center")
+                ax.set_title(f"{T['cams'][papel]} — {100 * float(cat[:, c].mean()):.0f}% {T['da_atencao']}",
+                             color="w", fontsize=14)
+            cax = fig.add_axes([0.952, 0.6, 0.007, 0.28])
+            cb = fig.colorbar(plt.cm.ScalarMappable(cmap="jet", norm=matplotlib.colors.Normalize(0, ESCALA_X)), cax=cax)
+            cb.set_label(T["escala"], color="w", fontsize=11)
+            cb.ax.tick_params(colors="w")
+            cb.set_ticks([0, 1, 2, 3, 4])
+            cb.set_ticklabels(["0", "1×", "2×", "3×", "4×+"])
             # 2. frase colorida pela atenção
             axf = fig.add_subplot(gs[1, :])
             axf.axis("off")
@@ -282,6 +318,8 @@ def main():
             axg.tick_params(colors="w")
             axg.legend(fontsize=9, ncol=2, facecolor="#16181d", labelcolor="w", loc="upper center",
                        bbox_to_anchor=(0.5, -0.2), frameon=False)
+            import textwrap
+            fig.text(0.075, 0.008, "\n".join(textwrap.wrap(T["rodape"], 205)), color="#9aa0a6", fontsize=10.5)
             fig.savefig(pasta / f"{q:04d}.png", facecolor=fig.get_facecolor())
             plt.close(fig)
             if q == 0:
@@ -295,6 +333,29 @@ def main():
                         str(pasta / "%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(mp4)],
                        check=True)
         print(f"🎬 {mp4} ({len(idx)} quadros, erro médio da mão {np.mean(hist_err):.1f} cm)", flush=True)
+        # tela de título deste episódio (2 s)
+        fig = plt.figure(figsize=(19.2, 10.8), dpi=100, facecolor="#0f1115")
+        fig.text(0.5, 0.56, T["card"].format(i=i_ep, n=len(escolhidos)), color="w", fontsize=40, ha="center",
+                 weight="bold")
+        fig.text(0.5, 0.45, T["card2"].format(t=frase_txt), color="#bbb", fontsize=24, ha="center")
+        fig.text(0.5, 0.38, f"{nome_ds} #{ep} | WLA v7 @ {a.passo} | erro médio da mão {np.mean(hist_err):.1f} cm",
+                 color="#888", fontsize=18, ha="center")
+        card = pasta / "titulo.png"
+        fig.savefig(card, facecolor=fig.get_facecolor())
+        plt.close(fig)
+        mp4c = saida / f"{pasta.name}_titulo.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(a.fps_video), "-i",
+                        str(card), "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(mp4c)],
+                       check=True)
+        videos += [mp4c, mp4]
+    if a.video_unico and videos:
+        lista = saida / "lista.txt"
+        lista.write_text("".join(f"file '{v}'\n" for v in videos))
+        unico = saida / a.video_unico
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lista),
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-r", str(a.fps_video), str(unico)],
+                       check=True)
+        print(f"🎬🎬 vídeo único: {unico}", flush=True)
     print("FIM", flush=True)
 
 
