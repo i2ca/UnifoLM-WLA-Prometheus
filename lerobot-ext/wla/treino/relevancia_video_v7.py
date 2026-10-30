@@ -28,11 +28,12 @@ TXT = {
     "en": {"titulo": "What drives the ACTION — causal relevance by occlusion", "ep": "VALIDATION episode (never seen in "
            "training)", "frame": "frame", "err": "hand error", "cams": {"head_left": "head (ZED)", "head_depth": "depth",
            "cam_wrist_left": "left wrist", "cam_wrist_right": "right wrist"}, "share": "of relevance",
-           "frase": "instruction — each word removed alone (number = Δ action)", "escala": "Δ action (cm-equiv.)",
+           "frase": "instruction — each part swapped for the other task's (color = Δ action)", "escala": "Δ action (cm-equiv.)",
            "acao": "right hand: predicted vs demonstration", "fecha": "hand closure (0..1) + waist yaw (rad)",
            "pred": "predicted", "demo": "demonstration", "passo": "chunk step (30 = 1 s)", "desloc": "displacement (cm)",
            "off": "(off)", "rodape": "Relevance = how much the predicted right-hand action changes when that part of the "
-           "input is removed (gray square over the image region, or the word deleted), all variants of the frame in one "
+           "input is removed (gray square over the image region) or swapped (a part of the instruction replaced by the "
+           "other task's: object, grasp, verb, destination), all variants of the frame in one "
            "batch with the same flow noise. Units: mean displacement of the predicted trajectory (cm) + 10 x change of "
            "the hand closure. Regions below {lim} cm-equiv. are not painted. Circles = the 3 most relevant regions.",
            "card": "Episode {i} of {n} — validation (never seen in training)", "card2": "task: {t}",
@@ -40,18 +41,34 @@ TXT = {
     "pt": {"titulo": "O que muda a AÇÃO — relevância causal por oclusão", "ep": "episódio de VALIDAÇÃO (nunca visto no "
            "treino)", "frame": "quadro", "err": "erro da mão", "cams": {"head_left": "cabeça (ZED)",
            "head_depth": "profundidade", "cam_wrist_left": "punho esquerdo", "cam_wrist_right": "punho direito"},
-           "share": "da relevância", "frase": "instrução — cada palavra removida sozinha (número = Δ ação)",
+           "share": "da relevância", "frase": "instrução — cada parte trocada pela da outra tarefa (cor = Δ ação)",
            "escala": "Δ ação (cm-equiv.)", "acao": "mão direita: prevista x demonstração",
            "fecha": "fechamento da mão (0..1) + yaw da cintura (rad)", "pred": "prevista", "demo": "demonstração",
            "passo": "passo do trecho (30 = 1 s)", "desloc": "deslocamento (cm)", "off": "(desligada)",
            "rodape": "Relevância = quanto a ação prevista da mão direita muda quando aquela parte da entrada é retirada "
-           "(quadrado cinza na região da imagem, ou a palavra apagada), todas as versões do quadro num lote com o mesmo "
+           "(quadrado cinza na região da imagem) ou trocada (uma parte da instrução pela da outra tarefa: objeto, jeito, "
+           "verbo, destino), todas as versões do quadro num lote com o mesmo "
            "ruído do fluxo. Unidade: deslocamento médio da trajetória prevista (cm) + 10 x mudança do fechamento. Abaixo "
            "de {lim} cm-equiv. não é pintado. Círculos = as 3 regiões mais relevantes.",
            "card": "Episódio {i} de {n} — validação (nunca visto no treino)", "card2": "tarefa: {t}",
            "card3": "{ds} #{ep} | WLA v7 @ {p} | erro médio da mão {e:.1f} cm"},
 }
 PAPEIS = ["head_left", "head_depth", "cam_wrist_left", "cam_wrist_right"]
+# 30/10: PEDAÇOS DE SENTIDO da instrução, cada um trocado pelo da outra tarefa (tirar uma palavra solta não muda nada:
+# a frase é redundante — "white", "side", "upright" já dizem "caneca")
+SEGMENTOS = {
+    "Pick up the white mug from the side, with the right hand upright.": [
+        ("verb", "Pick up", "Put down"), ("object", "white mug", "red apple"),
+        ("grasp", "from the side, with the right hand upright", "from above, with the right palm facing down")],
+    "Pick up the red apple from above, with the right palm facing down.": [
+        ("verb", "Pick up", "Put down"), ("object", "red apple", "white mug"),
+        ("grasp", "from above, with the right palm facing down", "from the side, with the right hand upright")],
+    "Carry the white mug in the right hand and place it under the coffee strainer.": [
+        ("verb", "Carry", "Pick up"), ("object", "white mug", "red apple"),
+        ("destination", "under the coffee strainer", "on the black X")],
+}
+NOME_SEG = {"en": {"verb": "verb", "object": "object", "grasp": "grasp", "destination": "destination"},
+            "pt": {"verb": "verbo", "object": "objeto", "grasp": "jeito de pegar", "destination": "destino"}}
 GRADE = {"head_left": (6, 8), "head_depth": (4, 6), "cam_wrist_left": (4, 6), "cam_wrist_right": (4, 6)}   # (linhas, cols)
 
 
@@ -159,11 +176,12 @@ def main():
                         it["images"][papel] = t2
                         itens.append(it)
                         rotulos.append(("img", papel, r, c))
-            for w in range(len(palavras)):
+            segs = SEGMENTOS.get(frase, [])
+            for k_s, (_, velho, novo) in enumerate(segs):
                 it = dict(item)
-                it["task"] = " ".join(palavras[:w] + palavras[w + 1:])
+                it["task"] = frase.replace(velho, novo)
                 itens.append(it)
-                rotulos.append(("pal", w))
+                rotulos.append(("seg", k_s))
             rival = rivais.get(frase)
             if rival:   # a instrução de OUTRA tarefa na mesma cena (o teste de linguagem que importa)
                 it = dict(item)
@@ -180,15 +198,15 @@ def main():
                 dfe = np.abs((P[i][:, fd].mean(-1) + 1) / 2 - f0).mean()
                 rel[i] = dt + 10 * dfe
             mapas = {p: np.zeros(GRADE[p]) for p in PAPEIS}
-            pal = np.zeros(len(palavras))
+            rel_seg = np.zeros(len(segs))
             rel_rival = None
             for i, rot in enumerate(rotulos):
                 if rot[0] == "rival":
                     rel_rival = rel[i]
                 if rot[0] == "img":
                     mapas[rot[1]][rot[2], rot[3]] = rel[i]
-                elif rot[0] == "pal":
-                    pal[rot[1]] = rel[i]
+                elif rot[0] == "seg":
+                    rel_seg[rot[1]] = rel[i]
             alvo = item["action"].numpy()[-H:]
             da = alvo[:, xyz] * esc[xyz] * 100
             err = float(np.linalg.norm(traj0 - da, axis=-1).mean())
@@ -238,13 +256,29 @@ def main():
                              if a.lingua == "en" else
                              f"   |   trocada pela da OUTRA tarefa ('{rivais[frase][:45]}…'): Δ ação = {rel_rival:.1f} cm-equiv.")
             axf.set_title(titulo_f, color="#ffd166" if rel_rival is not None else "#bbb", fontsize=13, loc="left")
-            x = 0.0
-            for w, v in zip(palavras, pal):
-                t_ = axf.text(x, 0.2, w + " ", fontsize=22, color="w", transform=axf.transAxes,
-                              bbox=dict(facecolor=cmap_p(0.12 + 0.85 * min(1.0, v / a.escala)), edgecolor="none", pad=4))
+            # cada palavra pertence a um pedaço (ou a nenhum); a cor é a do pedaço
+            import re as _re
+            spans = []
+            for k_s, (_, velho, _) in enumerate(segs):
+                i0 = frase.find(velho)
+                if i0 >= 0:
+                    spans.append((i0, i0 + len(velho), k_s))
+            x, rotulado = 0.0, set()
+            for mw in _re.finditer(r"\S+", frase):
+                k_s = next((k for i0, i1, k in spans if mw.start() < i1 and mw.end() > i0), None)
+                v = rel_seg[k_s] if k_s is not None else 0.0
+                cor = cmap_p(0.12 + 0.85 * min(1.0, v / a.escala)) if k_s is not None else "#2a2d33"
+                claro = k_s is not None and v / a.escala > 0.55   # fundo claro: texto escuro
+                t_ = axf.text(x, 0.2, mw.group() + " ", fontsize=22, color="#111" if claro else "w",
+                              weight="bold" if claro else "normal", transform=axf.transAxes,
+                              bbox=dict(facecolor=cor, edgecolor="none", pad=4))
                 fig.canvas.draw()
-                x = t_.get_window_extent().transformed(axf.transAxes.inverted()).x1 + 0.006
-                axf.text(x - 0.006, -0.45, f"{v:.1f}", fontsize=10, color="#999", transform=axf.transAxes, ha="right")
+                bb = t_.get_window_extent().transformed(axf.transAxes.inverted())
+                if k_s is not None and k_s not in rotulado:
+                    rotulado.add(k_s)
+                    axf.text(bb.x0, -0.5, f"{NOME_SEG[a.lingua][segs[k_s][0]]}: {v:.1f}", fontsize=12, color="#ffd166",
+                             transform=axf.transAxes)
+                x = bb.x1 + 0.006
             # ação
             axa = fig.add_subplot(gs[2, 0:2])
             axa.set_facecolor("#16181d")
@@ -274,7 +308,7 @@ def main():
             if q % 10 == 0:
                 top = {p: round(float(mapas[p].max()), 1) for p in PAPEIS}
                 print(f"   {q}/{len(idx)} | erro {err:.1f} cm | máx por câmera {top} | palavra mais relevante "
-                      f"'{palavras[int(pal.argmax())]}' {pal.max():.2f} | outra tarefa {rel_rival}", flush=True)
+                      f"{dict(zip([x[0] for x in segs], np.round(rel_seg, 1)))} | outra tarefa {rel_rival}", flush=True)
         mp4 = saida / f"{pasta.name}.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(a.fps_video), "-i",
                         str(pasta / "%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(mp4)],
