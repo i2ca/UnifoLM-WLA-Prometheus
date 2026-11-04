@@ -1,0 +1,19 @@
+# A tela do Prometheus em tela cheia no boot (KMS/DRM, sem desktop). TELA_FALSO=1 = dados fake; no Pi de verdade
+# troque por TELA_FONTE=http://10.55.0.1:8097 (o painel_mini.py da PGX, pela USB-C).
+[Unit]
+Description=Tela do Prometheus (480x320)
+After=systemd-user-sessions.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=tela
+Group=tela
+SupplementaryGroups=video input render
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=TELA_FALSO=1
+ExecStart=/usr/bin/python3 /opt/prometheus-tela/tela.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
