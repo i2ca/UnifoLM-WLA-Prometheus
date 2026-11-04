@@ -8,7 +8,7 @@ por ZMQ, no mesmo jeito das câmeras (cameras_wla_server.py na 5555):
         cabeçalho  {"t": time.time() do Jetson no fim do lote, "t0": do início, "n": pontos, "sn": ..., "pacotes": ...}
         pontos     float32 (n, 4): x, y, z em METROS no referencial do lidar (mid360_link do URDF) e refletividade
 
-    tcp://<robô>:5559   PUB, 03/11: o IMU do lidar (ICM40609 dentro do MID-360), média a cada ~20 ms, JSON
+    tcp://<robô>:5559   PUB, 03/11: o IMU do lidar (ICM40609 dentro do MID-360), média a cada ~5 ms (~200 Hz), JSON
         {"t": ..., "n": amostras, "acc": [x, y, z] em g, "gyro": [x, y, z] rad/s}   (referencial do lidar)
 
 O lidar só recebe o destino (host_ip) e o modo de trabalho quando o SDK sobe — sem este servidor ele fica mudo.
@@ -114,7 +114,7 @@ def main():
     def laco_imu():
         pediu, n_tot, t0 = False, 0, time.time()
         while True:
-            time.sleep(0.02)
+            time.sleep(0.005)   # 04/11: ~200 Hz (o SC-LIO-SAM quer o IMU rápido; era 0,02 = 50 Hz)
             with imu_trava:
                 pedacos, imu_lote[:] = list(imu_lote), []
             if pedacos:

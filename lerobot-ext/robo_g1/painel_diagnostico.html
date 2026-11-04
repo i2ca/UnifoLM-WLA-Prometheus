@@ -111,6 +111,12 @@ const sinal = (v, n = 3) => (v >= 0 ? '+' : '') + f(v, n);
 const tcls = t => t >= 75 ? 'muitoquente' : t >= 60 ? 'quente' : '';
 const kv = (el, pares) => el.innerHTML = pares.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
 let ultimo = null;
+// 04/11: todo pedido com prazo. Sem isso, um fetch que nunca responde (Wi-Fi piscando, robo reiniciando) segura
+// o laco para sempre e a pagina congela ate recarregar.
+async function busca(url, ms = 2500, opc = {}) {
+  const ab = new AbortController(), t = setTimeout(() => ab.abort(), ms);
+  try { return await fetch(url, {cache: 'no-store', ...opc, signal: ab.signal}); } finally { clearTimeout(t); }
+}
 
 function camera(nome) {
   if ($('cam_' + nome)) return;
@@ -118,9 +124,11 @@ function camera(nome) {
   fig.innerHTML = `<img id="cam_${nome}" alt="câmera ${nome}"><figcaption id="capt_${nome}">${nome}</figcaption>`;
   $('cams').append(fig);
   const img = $('cam_' + nome);
-  const liga = () => img.src = `cam/${nome}.jpg?t=${Date.now()}`;
+  const liga = () => { img._t = Date.now(); img.src = `cam/${nome}.jpg?t=${img._t}`; };
   img.onload = () => setTimeout(liga, 80);
   img.onerror = () => setTimeout(liga, 1500);
+  // 04/11: vigia -- se um quadro ficou pendurado (nem load nem error), pede outro
+  setInterval(() => { if (Date.now() - img._t > 4000) liga(); }, 2000);
   liga();
 }
 
@@ -191,10 +199,19 @@ function mao(lado, el, kel, info, idade) {
   $(info).textContent = idade === null ? 'sem sinal' : `${f(idade * 1000, 0)} ms`;
 }
 
+// 04/11: o laco SEMPRE se reagenda (finally). Antes, qualquer erro ao desenhar (um campo que veio vazio da bateria,
+// da placa, das cameras...) derrubava o tique() e a pagina parava de atualizar ate recarregar.
 async function tique() {
-  let e;
-  try { e = await (await fetch('estado.json', {cache: 'no-store'})).json(); }
-  catch (_) { $('pLig').className = 'pilula ruim'; $('pLig').textContent = 'painel fora do ar'; return setTimeout(tique, 1000); }
+  let espera = 250;
+  try {
+    let e;
+    try { e = await (await busca('estado.json')).json(); }
+    catch (_) { $('pLig').className = 'pilula ruim'; $('pLig').textContent = 'painel fora do ar'; espera = 1000; return; }
+    desenha(e);
+  } catch (err) { console.error('painel: erro ao desenhar', err); }
+  finally { setTimeout(tique, espera); }
+}
+function desenha(e) {
   ultimo = e;
   trava(e);
   $('pPose').textContent = 'pose inicial: ' + (e.pose_inicial || '—');
@@ -253,7 +270,6 @@ async function tique() {
   kv($('kJet'), [['temperaturas', Object.entries(J.temperaturas).map(([k, v]) => `${k} <span class="${tcls(v)}">${f(v, 0)}°</span>`).join(' · ')],
     ['carga', J.carga.map(v => f(v, 2)).join(' ') + ` (${J.nucleos} núcleos)`],
     ['memória', `${J.mem_usada_mb} / ${J.mem_total_mb} MB`], ['processos', procs]]);
-  setTimeout(tique, 250);
 }
 tique();
 // 03/11: teste de pressão
@@ -273,7 +289,7 @@ function barras(cv, m, hist) {
 }
 async function pressao() {
   try {
-    const r = await (await fetch('pressao.json', {cache: 'no-store'})).json();
+    const r = await (await busca('pressao.json')).json();
     barras($('presD'), r.maos.right, presHist.right); barras($('presE'), r.maos.left, presHist.left);
     const seg = Object.entries(r.segurando).map(([l, v]) => `${l === 'right' ? 'dir.' : 'esq.'} ${Math.round(v * 100)}%`).join(', ');
     $('presInfo').textContent = (r.zerado ? '' : 'referência = 1ª leitura (aperte zerar com a mão aberta) · ') + (seg ? `segurando: ${seg} · ` : '') +
@@ -292,7 +308,9 @@ import { OrbitControls } from './static/OrbitControls.js';
 const $ = id => document.getElementById(id), caixa = $('lid3d');
 const cena = new THREE.Scene(), cam = new THREE.PerspectiveCamera(55, 16 / 9, 0.02, 60);
 cam.up.set(0, 0, 1); cam.position.set(-2.2, -1.6, 1.4);
-const rend = new THREE.WebGLRenderer({antialias: true}); rend.setPixelRatio(devicePixelRatio); rend.setClearColor(0x0a0c10);
+const rend = new THREE.WebGLRenderer({antialias: true});
+// 04/11: se o contexto WebGL cair mesmo assim, deixa o navegador devolver (o three.js recria tudo)
+rend.domElement.addEventListener('webglcontextlost', ev => ev.preventDefault()); rend.setPixelRatio(devicePixelRatio); rend.setClearColor(0x0a0c10);
 caixa.appendChild(rend.domElement);
 const ctrl = new OrbitControls(cam, rend.domElement); ctrl.target.set(0.8, 0, -0.6); ctrl.enableDamping = true; ctrl.update();
 const grade = new THREE.GridHelper(8, 32, 0x34405a, 0x1d2433); grade.rotation.x = Math.PI / 2; grade.position.z = -1.2; cena.add(grade);
@@ -307,7 +325,7 @@ tamanho(); new ResizeObserver(tamanho).observe(caixa);
 const hist = [], cor = new THREE.Color();
 async function lidar() {
   try {
-    const L = await (await fetch('lidar.json', {cache: 'no-store'})).json();
+    const L = await (await busca('lidar.json')).json();
     hist.push([performance.now(), L.cm]);
     const janela = $('lidAcum').checked ? 2000 : 0;
     while (hist.length > 1 && performance.now() - hist[0][0] > janela) hist.shift();
@@ -317,6 +335,9 @@ async function lidar() {
       const z = c[i + 2] / 100; pos[3 * k] = c[i] / 100; pos[3 * k + 1] = c[i + 1] / 100; pos[3 * k + 2] = z;
       cor.setHSL(0.66 - 0.66 * Math.min(1, Math.max(0, (z + 1.3) / 1.8)), 0.85, 0.55); col[3 * k] = cor.r; col[3 * k + 1] = cor.g; col[3 * k + 2] = cor.b;
     }
+    // 04/11: libera os buffers antigos da GPU antes de por os novos. Sem o dispose() cada quadro (~8 Hz) deixava
+    // dois buffers orfaos na placa; depois de um tempo o WebGL perdia o contexto e a nuvem ficava preta.
+    geo.dispose();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     $('lidInfo').textContent = L.vivo ? `${Math.round(L.pontos_s / 1000)} mil pontos/s · ${n} na tela` : 'sem pontos (lidar_servidor.py no init?)';
   } catch (_) { $('lidInfo').textContent = 'sem resposta'; }

@@ -339,6 +339,16 @@ class Trava:
             for lado, msg in self.maos.items():
                 self.mao_congelada[lado] = [float(msg.motor_state[k].q) for k in range(NUM_HAND_MOTORS)]
         print(f"\n🛑 PÂNICO: {motivo} — braços congelados na pose medida; comandos do PC descartados.", flush=True)
+        # 04/11: EMERGÊNCIA também nas PERNAS (o SafeStop do vehicle_driver do astro: "aciona emergência" e para o
+        # veículo). Antes o pânico só travava braços/mãos e a locomoção (porta 6005) seguia aceitando velocidade.
+        if LOCO_CLIENT is not None:
+            def _para():
+                try:
+                    LOCO_CLIENT.Move(0.0, 0.0, 0.0, continous_move=False)
+                except Exception as e:
+                    print(f"[Loco] falha ao parar na emergência: {e}", flush=True)
+            threading.Thread(target=_para, daemon=True).start()
+            print("🛑 EMERGÊNCIA: robô PARADO (locomoção zerada); comandos de andar RECUSADOS até rearmar.", flush=True)
         if self.alerta is not None:
             self.alerta.bloqueado()
         return True
@@ -358,7 +368,8 @@ class Trava:
             self.congelado = None
             self.mao_congelada = {}
             self.esq_fixo = {}   # o braço esquerdo trava de novo onde estiver
-        print("\n✅ Rearmado: comandos do PC voltam a passar (lentos e leves).", flush=True)
+        print("\n✅ Rearmado: comandos do PC voltam a passar (lentos e leves)"
+              + ("; locomoção LIBERADA." if LOCO_CLIENT is not None else "."), flush=True)
         if self.alerta is not None:
             self.alerta.liberado()
 
@@ -593,6 +604,7 @@ class Trava:
 
 
 TRAVA = None
+LOCO_CLIENT = None   # 04/11: o LocoClient, para a emergência parar as pernas
 
 
 class MotionSwitcher:
@@ -659,6 +671,7 @@ LOCOCMD_PORT   = 6005   # ← Novo: velocidade de locomoção (PC → robô), s�
 # É a rede caindo, o teleop travando ou o operador tirando o óculos: em todos
 # esses casos um G1 andando sem ninguém no comando é o pior desfecho possível.
 LOCO_WATCHDOG_S = 0.4
+ODOM_PORT = 6008   # 04/11: PUB odometria do G1 (rt/odommodestate) para o astro
 
 NUM_MOTORS      = 35
 NUM_HAND_MOTORS = 7
@@ -948,6 +961,21 @@ def loco_cmd_loop(loco_sock, loco_client, shutdown_event):
         vy = float(msg.get("vy", 0.0))
         vyaw = float(msg.get("vyaw", 0.0))
 
+        # 04/11: EMERGÊNCIA (pânico): nada anda. Recusa e mantém parado até o rearme.
+        if TRAVA is not None and TRAVA.panico:
+            if andando or abs(vx) + abs(vy) + abs(vyaw) > 0:
+                if andando:
+                    try:
+                        loco_client.Move(0.0, 0.0, 0.0, continous_move=False)
+                    except Exception:
+                        pass
+                    andando = False
+                agora_r = time.time()
+                if agora_r - getattr(loco_cmd_loop, "_aviso", 0.0) > 2.0:
+                    loco_cmd_loop._aviso = agora_r
+                    print("[Loco] 🛑 EMERGÊNCIA ativa: comando de andar RECUSADO (rearme para liberar).", flush=True)
+            continue
+
         # Teto também aqui, não só no PC: o servidor não deve confiar que o
         # cliente respeitou o próprio limite.
         vx = max(-0.5, min(0.5, vx))
@@ -1103,7 +1131,37 @@ def main():
             loco_sock = None
             print(f"[Startup] ⚠️  Locomoção DESABILITADA (LocoClient falhou: {e}). O resto segue normal.")
 
+    global LOCO_CLIENT
+    LOCO_CLIENT = loco_client
     TRAVA.inicia(ctx, lowcmd_pub, crc, left_hand_cmd_pub, right_hand_cmd_pub)   # v3
+
+    # 04/11: ODOMETRIA do G1 (estimador da Unitree: pernas + IMU, rt/odommodestate ~500 Hz) para o astro na PGX:
+    # tcp://<robô>:6008 PUB, JSON a ~50 Hz {t, pos[3], vel[3], yaw_speed, rpy[3], quat[4]} (referencial da odometria)
+    try:
+        from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+        odom_sock = ctx.socket(zmq.PUB)
+        odom_sock.setsockopt(zmq.SNDHWM, 10)
+        odom_sock.bind(f"tcp://0.0.0.0:{ODOM_PORT}")
+        _odom_t = [0.0]
+
+        def _odom(m):
+            agora_o = time.time()
+            if agora_o - _odom_t[0] < 0.02:
+                return
+            _odom_t[0] = agora_o
+            d = {"t": agora_o, "pos": [float(v) for v in m.position], "vel": [float(v) for v in m.velocity],
+                 "yaw_speed": float(m.yaw_speed), "rpy": [float(v) for v in m.imu_state.rpy],
+                 "quat": [float(v) for v in m.imu_state.quaternion],
+                 "panico": bool(TRAVA.panico) if TRAVA is not None else None}
+            try:
+                odom_sock.send(json.dumps(d).encode("utf-8"), zmq.NOBLOCK)
+            except zmq.Again:
+                pass
+        odom_sub = ChannelSubscriber("rt/odommodestate", SportModeState_)
+        odom_sub.Init(_odom, 10)
+        print(f"[Startup] 🧭 Odometria do G1 (rt/odommodestate) na porta {ODOM_PORT}.")
+    except Exception as e:
+        print(f"[Startup] ⚠️  odometria não repassada ({e}); o resto segue normal.")
 
     shutdown_event = threading.Event()
 
