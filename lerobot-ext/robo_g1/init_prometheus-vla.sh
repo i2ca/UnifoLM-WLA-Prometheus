@@ -33,6 +33,11 @@ VOLUME_BIP=50     # bipe de emergência enquanto o cogumelo está apertado (0-10
 #   http://192.168.123.164:8095/   — só LÊ o DDS; rearme/pânico só pelos botões da página.
 USE_DIAGNOSTICO=true
 
+# Lidar da cabeça (Livox MID-360, 03/11): lidar_servidor.py liga o lidar pelo Livox-SDK2 e publica a nuvem
+#   (x, y, z em metros no referencial do lidar + refletividade) por ZMQ em tcp://192.168.123.164:5558.
+#   Sem ele o lidar fica mudo. Só lê: não mexe no robô.
+USE_LIDAR=true
+
 # Câmeras: "true" = cameras_wla_server.py — formato do dataset do WLA, 640x480 (4:3), 30 fps, numa
 #   mensagem só na 5555: head_stereo_left/right (ZED, cru), wrist_left (RealSense 138422074380),
 #   wrist_right (RealSense 141722078588), head_camera (D435i da cabeça). Sem profundidade.
@@ -64,7 +69,7 @@ conda activate g1
 cleanup() {
     echo -e "\n\n🛑 [Ctrl+C] Pressionado! Encerrando os servidores..."
     # Mata os processos em segundo plano através dos PIDs
-    kill $PID_CAM $PID_CAM_RIGHT $PID_DEX $PID_DIAG 2>/dev/null
+    kill $PID_CAM $PID_CAM_RIGHT $PID_DEX $PID_DIAG $PID_LIDAR 2>/dev/null
     echo "✅ Servidores desligados. Robô liberado."
     exit 0
 }
@@ -131,6 +136,12 @@ if [ "$USE_DIAGNOSTICO" = "true" ]; then
     python -u $PROJECT_DIR/painel_diagnostico.py &
     PID_DIAG=$!
     echo "   [OK] Painel de diagnóstico http://192.168.123.164:8095/ (PID: $PID_DIAG)"
+fi
+if [ "$USE_LIDAR" = "true" ]; then
+    # as mensagens do Livox-SDK2 e do servidor vão para o log, não para este terminal
+    python -u $PROJECT_DIR/lidar_servidor.py > ~/lidar_servidor.log 2>&1 &
+    PID_LIDAR=$!
+    echo "   [OK] Lidar MID-360 tcp://192.168.123.164:5558, log em ~/lidar_servidor.log (PID: $PID_LIDAR)"
 fi
 if [ "$USE_PANICO" = "true" ]; then
     echo "   [!!] Ponte sobe BLOQUEADA: LED AMARELO. Solte o cogumelo e rearme no painel :8095 (ou pelo PC, porta 6006)."

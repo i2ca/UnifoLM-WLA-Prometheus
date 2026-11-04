@@ -49,10 +49,15 @@ def torso_na_pelvis(fk, q29):
 
 
 class Camera:
-    """Câmera pinhole (centro da imagem, sem distorção) presa ao tronco: K, R_ct, t_ct (câmera <- tronco)."""
+    """Câmera pinhole (sem distorção) presa ao tronco: K, R_ct, t_ct (câmera <- tronco). 03/11: o centro óptico
+    (cx, cy) vem do json quando houver (calibração lidar+ZED); senão, o centro da imagem."""
 
     def __init__(self, cfg):
         self.f, self.w, self.h = cfg["focal_px"], cfg["largura"], cfg["altura"]
+        self.cx, self.cy = cfg.get("cx", self.w / 2), cfg.get("cy", self.h / 2)
+        # 03/11: a DISTORÇÃO de fábrica da lente (k1, k2, p1, p2, k3 do SN19436): a ZED é grande-angular — sem ela o
+        # pinhole errava 11 px na mediana e até 85 px nas bordas
+        self.dist = np.array(cfg["distorcao"]) if cfg.get("distorcao") is not None else None
         self.R_ct = np.array(cfg["R_camera_tronco"])
         self.t_ct = np.array(cfg["t_camera_tronco"])
 
@@ -62,7 +67,13 @@ class Camera:
 
     def raio_na_pelvis(self, px, R_tp, p_tp):
         """Pixel -> (origem, direção) do raio no referencial da pelvis."""
-        d_cam = np.array([(px[0] - self.w / 2) / self.f, (px[1] - self.h / 2) / self.f, 1.0])
+        if self.dist is not None:
+            import cv2
+            K = np.array([[self.f, 0, self.cx], [0, self.f, self.cy], [0, 0, 1.0]])
+            x, y = cv2.undistortPoints(np.array([[px[:2]]], np.float64), K, self.dist)[0, 0]
+            d_cam = np.array([x, y, 1.0])
+        else:
+            d_cam = np.array([(px[0] - self.cx) / self.f, (px[1] - self.cy) / self.f, 1.0])
         R_tc, o_tronco = self.R_ct.T, -self.R_ct.T @ self.t_ct          # câmera -> tronco
         o = p_tp + R_tp @ o_tronco
         d = R_tp @ (R_tc @ d_cam)
@@ -79,7 +90,13 @@ class Camera:
     def projeta(self, P_pelvis, R_tp, p_tp):
         P_t = R_tp.T @ (np.asarray(P_pelvis) - p_tp)
         P_c = self.R_ct @ P_t + self.t_ct
-        return np.array([self.f * P_c[0] / P_c[2] + self.w / 2, self.f * P_c[1] / P_c[2] + self.h / 2])
+        x, y = P_c[0] / P_c[2], P_c[1] / P_c[2]
+        if self.dist is not None:
+            k1, k2, p1, p2, k3 = self.dist
+            r2 = x * x + y * y
+            rad = 1 + k1 * r2 + k2 * r2 ** 2 + k3 * r2 ** 3
+            x, y = x * rad + 2 * p1 * x * y + p2 * (r2 + 2 * x * x), y * rad + p1 * (r2 + 2 * y * y) + 2 * p2 * x * y
+        return np.array([self.f * x + self.cx, self.f * y + self.cy])
 
 
 # ── ER-1 apontando ─────────────────────────────────────────────────────────────────────────────────────
