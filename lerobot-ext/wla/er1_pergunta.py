@@ -110,24 +110,32 @@ def main():
     trava = threading.Lock()
     estado = {"n": len(list(pasta.glob("*.json"))), "ultima": None}
 
-    def pergunta(q, cam, livre, max_tokens=120, escala=1.0, lora=None):
+    def monta(q, cam, livre, escala=1.0):
+        """(msgs, bgr) da pergunta, ou ({"erro": ...}, None) sem imagem recente."""
         # cam pode ser várias, separadas por vírgula (02/10: cabeça + punho direito para a narração): vão em ordem
         bgrs = []
-        for c in cam.split(","):
+        for c in [c for c in cam.split(",") if c]:   # 30/10: cam vazia = pergunta só de texto (robô desligado)
             t = cams.t.get(c, 0)
             b = cams.quadro(c)
             if b is None or time.time() - t > 2.0:
                 r = {"erro": f"sem imagem recente da câmera '{c}' (há {time.time() - t:.0f} s; chegando: {sorted(cams.jpg)})"}
                 print(f"[ER-1] {r['erro']}", flush=True)
-                return r
+                return r, None
             bgrs.append(b)
         if escala != 1.0:   # imagem menor = menos tokens = o ER-1 disputa menos a GPU com o WLA (02/10)
             bgrs = [cv2.resize(b, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA) for b in bgrs]
         rgbs = [b if a.rgb else cv2.cvtColor(b, cv2.COLOR_BGR2RGB) for b in bgrs]
-        bgr = np.hstack([cv2.resize(b, (bgrs[0].shape[1], bgrs[0].shape[0])) for b in bgrs])   # só para salvar
+        bgr = (np.hstack([cv2.resize(b, (bgrs[0].shape[1], bgrs[0].shape[0])) for b in bgrs]) if bgrs
+               else None)   # só para salvar
         texto = q if livre else f"{q}\nLook carefully at the image. Answer only yes or no."
         msgs = [{"role": "user", "content": [{"type": "image", "image": Image.fromarray(x)} for x in rgbs]
                  + [{"type": "text", "text": texto}]}]
+        return msgs, bgr
+
+    def pergunta(q, cam, livre, max_tokens=120, escala=1.0, lora=None):
+        msgs, bgr = monta(q, cam, livre, escala)
+        if bgr is None and isinstance(msgs, dict):
+            return msgs
         with trava:
             entrada = proc.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True, return_dict=True,
                                                return_tensors="pt").to(modelo.device)
@@ -143,13 +151,48 @@ def main():
         m = re.search(r"\b(yes|no)\b", cru.lower())
         r = {"pergunta": q, "camera": cam, "resposta": m.group(1) if m else cru, "sim": (m.group(1) == "yes") if m else None,
              "ms": ms, "cru": cru, "hora": time.strftime("%H:%M:%S")}
-        img = pasta / f"{n:04d}.jpg"
-        cv2.imwrite(str(img), bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        r["imagem"] = str(img)
+        if bgr is not None:
+            img = pasta / f"{n:04d}.jpg"
+            cv2.imwrite(str(img), bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            r["imagem"] = str(img)
+            estado["ultima"] = img
         (pasta / f"{n:04d}.json").write_text(json.dumps(r, ensure_ascii=False, indent=1))
-        estado["ultima"] = img
         print(f"[ER-1] {r['hora']} {ms} ms | {cam} | {q} -> {r['resposta']}", flush=True)
         return r
+
+    def pergunta_stream(q, cam, max_tokens, escreve):
+        """30/10: resposta LIVRE em pedaços, enquanto gera (a cabine começa a falar na 1ª frase). Sem adaptador."""
+        from transformers import TextIteratorStreamer
+        msgs, bgr = monta(q, cam, True)
+        if bgr is None and isinstance(msgs, dict):
+            escreve(json.dumps(msgs, ensure_ascii=False))
+            return
+        with trava:
+            entrada = proc.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True, return_dict=True,
+                                               return_tensors="pt").to(modelo.device)
+            st = TextIteratorStreamer(proc.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=120)
+            tq = time.perf_counter()
+            erro = []
+
+            def gera():
+                try:
+                    with torch.inference_mode(), sem_lora():
+                        modelo.generate(**entrada, max_new_tokens=max_tokens, do_sample=False, streamer=st)
+                except Exception as e:  # noqa: BLE001
+                    erro.append(repr(e))
+                    st.end()
+            th = threading.Thread(target=gera, daemon=True)
+            th.start()
+            txt, primeiro = "", None
+            for pedaco in st:
+                if pedaco:
+                    primeiro = primeiro or round((time.perf_counter() - tq) * 1000)
+                    txt += pedaco
+                    escreve(pedaco)
+            th.join()
+            ms = round((time.perf_counter() - tq) * 1000)
+        print(f"[ER-1] stream {ms} ms (1º pedaço {primeiro} ms) | {cam or 'sem câmera'} | {q[-60:]!r} -> {txt[:80]!r}"
+              + (f" | ERRO {erro[0]}" if erro else ""), flush=True)
 
     def traduz(texto):
         """Só texto, sem imagem: traduz para português do Brasil (histórico de falas da cabine, 02/10)."""
@@ -180,12 +223,22 @@ def main():
 
         def do_GET(self):
             u = urllib.parse.urlparse(self.path)
-            qs = urllib.parse.parse_qs(u.query)
+            qs = urllib.parse.parse_qs(u.query, keep_blank_values=True)   # cam= vazia = só texto
             if u.path == "/pergunta" and qs.get("q"):
                 r = pergunta(qs["q"][0], qs.get("cam", ["head_stereo_left"])[0], qs.get("livre", ["0"])[0] == "1",
                              int(qs.get("max", ["120"])[0]), float(qs.get("escala", ["1"])[0]),
                              {"1": True, "0": False}.get(qs.get("lora", [""])[0]))
                 return self._manda(json.dumps(r, ensure_ascii=False).encode(), "application/json")
+            if u.path == "/pergunta_stream" and qs.get("q"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()   # HTTP/1.0: o corpo vai até fechar a conexão
+
+                def escreve(t):
+                    self.wfile.write(t.encode())
+                    self.wfile.flush()
+                return pergunta_stream(qs["q"][0], qs.get("cam", [""])[0], int(qs.get("max", ["200"])[0]), escreve)
             if u.path == "/traduz" and qs.get("t"):
                 return self._manda(json.dumps(traduz(qs["t"][0]), ensure_ascii=False).encode(), "application/json")
             if u.path.startswith("/camera/") and u.path.endswith(".jpg"):   # 28/10: a câmera sem o executor do WLA
