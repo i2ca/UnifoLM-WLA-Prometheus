@@ -223,5 +223,29 @@
   0.0,
   0.0
  ],
- "descanso_nota": "06/10: braços baixados ao lado do corpo, cotovelo ~56°, coluna reta — pose FRIA para esperar entre testes (pitch da cintura ~1,7 Nm, contra ~17 Nm na de gravação)"
+ "descanso_nota": "06/10: braços baixados ao lado do corpo, cotovelo ~56°, coluna reta — pose FRIA para esperar entre testes (pitch da cintura ~1,7 Nm, contra ~17 Nm na de gravação)",
+ "left_gravacao_baixa": [
+  -0.6417,
+  0.9432,
+  0.4143,
+  0.964,
+  -0.0309,
+  -0.4442,
+  0.2514
+ ],
+ "right_gravacao_baixa": [
+  -0.6345,
+  -0.9511,
+  -0.4095,
+  0.9643,
+  0.0246,
+  -0.4455,
+  -0.2472
+ ],
+ "cintura_gravacao_baixa": [
+  0.0,
+  0.0,
+  0.0
+ ],
+ "gravacao_baixa": "03/11: a pose de gravação com as DUAS mãos 6 cm mais baixas (IK, mesma orientação): ombro ~0,1 rad menos levantado e menos aberto, para esquentar menos o ombro parado"
 }

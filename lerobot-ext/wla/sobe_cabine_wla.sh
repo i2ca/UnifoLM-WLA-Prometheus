@@ -53,5 +53,7 @@ SEM_ER1=()
 [ -n "${SERVO:-}" ] && [ "${NARRA:-0}" != "1" ] && [ "${TERMINOU:-0}" != "1" ] && SEM_ER1+=(--narra-s 1000000)   # ER-1 só para o servo
 [ "${TERMINOU:-0}" = "1" ] && [ "${NARRA:-0}" != "1" ] && SEM_ER1+=(--so-terminou --narra-s "${TERMINOU_S:-5}")
 [ "${FALA:-1}" = "0" ] && SEM_ER1+=(--voz nenhuma)
-exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose gravacao --tarefa "" --segundos 0 \
-    --braco-esquerdo parado --juntas-travadas 20 "${SEM_ER1[@]}" "$@"
+# 03/11: DEDOS=medido (padrão): o v7/v8 treinaram SÓ com datasets de dedos medidos — com "zero" o modelo achava a
+# mão aberta segurando a caneca e soltava logo no começo do "colocar no coador". DEDOS=zero para modelos até o v6.
+exec "$PY" -u "$WLA_DIR/roda_wla_real.py" --servidor ws://127.0.0.1:8601 --pose "${POSE:-gravacao}" --tarefa "" --segundos 0 \
+    --braco-esquerdo parado --juntas-travadas 20 --dedos-estado "${DEDOS:-medido}" "${SEM_ER1[@]}" "$@"

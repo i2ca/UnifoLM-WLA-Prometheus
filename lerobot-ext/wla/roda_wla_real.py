@@ -284,7 +284,7 @@ def main():
     ap.add_argument("--servidor", default="ws://127.0.0.1:8600",
                     help="servidor oficial do WLA já carregado (sobe_wla_servidor.sh); 'processo' = carrega aqui")
     ap.add_argument("--sem-pose-inicial", action="store_true", help="começa da pose atual (fora da distribuição)")
-    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao", "gravacao_aberta", "coador", "descanso"], default="inicial",
+    ap.add_argument("--pose", choices=["inicial", "elevada", "dataset", "maca", "gravacao", "gravacao_aberta", "gravacao_baixa", "coador", "descanso"], default="inicial",
                     help="inicial = coluna reta e mãos afastadas (~49 cm, 30/09); elevada = a do dataset com o "
                          "ombro 0,35 rad mais alto e tronco 10° à frente; dataset = a mediana do início dos episódios Dex1; maca = a do início dos 50 episódios do nosso dataset da maçã (use com o modelo afinado); gravacao = braços abertos fora da cena (a do botão do painel, 01/10 — use com modelos treinados com episódios que começam nela)")
     ap.add_argument("--cintura-reta", action="store_true",
@@ -305,6 +305,11 @@ def main():
     ap.add_argument("--passo-max-cm", type=float, default=1.0,
                     help="quanto a mão pode andar por passo de controle (1 cm a 20 Hz = 20 cm/s); corta saltos")
     ap.add_argument("--passo-max-rad", type=float, default=0.03, help="quanto cada junta pode mudar por passo")
+    ap.add_argument("--yaw-suave-s", type=float, default=0.5,
+                    help="03/11: filtro passa-baixa do yaw da cintura pedido (constante de tempo, s; 0 = sem filtro) — "
+                         "o modelo muda de ideia entre trechos e a cintura ia atrás de cada mudança")
+    ap.add_argument("--yaw-zona-morta", type=float, default=0.02,
+                    help="03/11: mudança do yaw (rad, ~1°) abaixo disto é ignorada (a cintura não fica tremendo)")
     ap.add_argument("--tarefa", default="Pick up the apple.",
                     help='frase para o WLA (a do treino do dataset de fruta era "Pick up the fruit and place it on '
                          'the plate.")')
@@ -399,6 +404,8 @@ def main():
     punhos = {} if a.sem_punhos else {"cam_left_wrist": sw.Camera(a.robo, 5555, cabine, "wrist_left"),
                                       "cam_right_wrist": sw.Camera(a.robo, 5555, cabine, "wrist_right")}
     fk = FK()
+    from viz_cabine import VizCabine   # 03/11: plano projetado na câmera + mundo 3D na cabine
+    viz = VizCabine(cabine, fk)
     t0 = time.time()
     dex3 = False   # modelo Dex3 (fig6d)? só um servidor externo que anuncie fig6d no metadata liga isto
     if a.servidor == "processo":
@@ -460,7 +467,7 @@ def main():
     alvo = {i: float(inicio[i]) for i in list(CINTURA) + list(BRACOS)}
     q_ini = inicio.copy()
     if not a.sem_pose_inicial:
-        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao", "gravacao_aberta": "_gravacao_aberta", "coador": "_coador", "descanso": "_descanso"}[a.pose]
+        suf = {"inicial": "_inicial", "elevada": "_elevada", "dataset": "", "maca": "_maca", "gravacao": "_gravacao", "gravacao_aberta": "_gravacao_aberta", "gravacao_baixa": "_gravacao_baixa", "coador": "_coador", "descanso": "_descanso"}[a.pose]
         q_ini[BRACO["left"]] = POSE_JUNTAS["left" + suf]
         q_ini[BRACO["right"]] = POSE_JUNTAS["right" + suf]
         if not a.cintura_reta:
@@ -948,6 +955,7 @@ def main():
           f"{fc * 100:.0f} cm para cima | mãos a ≥ {a.mao_mao_min * 100:.0f} cm uma da outra | peso da orientação "
           f"{a.peso_rot}", flush=True)
     stats = {}
+    filtro_yaw = {}   # 03/11: o yaw filtrado vive a execução inteira (stats é refeito a cada trecho)
     volta = None   # botão 'posição inicial' da cabine
     fech_ant, segura_braco = {}, {}   # espera os dedos fecharem antes de subir
     temp_log = [None]   # 29/10: CSV da cintura
@@ -1028,6 +1036,7 @@ def main():
                     _registra(atual, stats, log, t_ini, alvo, q29(), cabine, a, est, partida, fech_mao, usados)
                 anterior, t_troca = atual, tc   # suavização: o trecho que sai ainda conta nos primeiros passos
                 atual, usados = chegou, 0
+                viz.plano(atual, q29())
                 stats = {"cortes": {"left": 0, "right": 0}, "erros": {"left": 0.0, "right": 0.0}, "fins": {},
                          "passo_inicial": None}
                 q_ik = q29()
@@ -1067,7 +1076,15 @@ def main():
                     # o alvo da mão é na pelvis, então girar o tronco não muda para onde a mão vai.
                     if a.cintura == "yaw" and "action.lower_body" in acao:
                         yaw = float(np.clip(acao["action.lower_body"][0][k, 12], -a.cintura_yaw_max, a.cintura_yaw_max))
-                        alvo[12] = float(alvo[12] + np.clip(yaw - alvo[12], -a.passo_max_rad, a.passo_max_rad))
+                        # 03/11: SUAVE — passa-baixa no pedido + zona morta (antes: saltos de até 18° entre trechos)
+                        yf = filtro_yaw.get("y", alvo[12])
+                        if a.yaw_suave_s > 0:
+                            yf += (yaw - yf) * (1.0 / a.hz) / (a.yaw_suave_s + 1.0 / a.hz)
+                        else:
+                            yf = yaw
+                        filtro_yaw["y"] = yf
+                        if abs(yf - alvo[12]) >= a.yaw_zona_morta:
+                            alvo[12] = float(alvo[12] + np.clip(yf - alvo[12], -a.passo_max_rad, a.passo_max_rad))
                         stats["yaw"] = yaw
                     q_ik[12] = float(est.q(12))
                     alvos_p, vs = {}, {}
@@ -1237,6 +1254,15 @@ def main():
                     if any(abs(v) >= 0.115 for v in integ_c.values()):
                         print("   ⚠️  correção da cintura no limite: o tronco não chega a 0 — diminua --ki-cintura "
                               "ou use --ki-cintura 0", flush=True)
+            # 03/11: cabine — mãos, rastro, cintura, dedos e temperaturas (~5 Hz; nada disso pesa no laço)
+            viz.vivo(tc, q29(), alvo[12], fech_mao,
+                     int((tc - atual["t_obs"]) * a.hz) if atual is not None else None,
+                     lambda: {n: _temp(est.low["motor_state"][i]) for n, i in
+                              (("cintura_yaw", 12), ("cintura_roll", 13), ("cintura_pitch", 14), ("ombro_esq", 15),
+                               ("cotovelo_esq", 18), ("ombro_dir", 22), ("cotovelo_dir", 25))},
+                     {l: float(np.mean(dex3_para_fig6d(maos.q[l], l))) for l in ("left", "right")
+                      if maos.q.get(l) is not None} if dex3 else None,
+                     {l: maos.q.get(l) for l in ("left", "right")})
             envia()   # sempre: sem trecho novo, segura o último alvo (o arm_sdk nunca fica mudo)
             time.sleep(max(0.0, dt - (time.time() - tc)))
         if atual is not None:
@@ -1263,7 +1289,7 @@ def _registra(tr, st, log, t_ini, alvo, qm, cabine, a, est, partida, fech_mao, u
     if not fins:
         print(f"   consulta {tr['n']:3d} | {tr['ms']:4.0f} ms | chegou tarde demais (nenhum passo usado)", flush=True)
         return
-    cabine.publica_quadro("wla_trajetoria", sw.desenha_trajetoria(ee, tr["acao"], tr["garras"]))
+    # 03/11: o desenho "wla_trajetoria" saiu — a cabine projeta o plano na câmera e mostra o 3D (viz_cabine.py)
     info = {"modo": "ENSAIO (nada enviado)" if a.ensaio else "REAL — braços + mãos",
             "consulta": tr["n"], "acao_ms": round(tr["ms"]), "tarefa_no_modelo": tr["frase"], "escala": a.escala,
             "caixa_rad": a.caixa, "hz": a.hz, "passo_inicial": st["passo_inicial"], "passos_usados": usados,

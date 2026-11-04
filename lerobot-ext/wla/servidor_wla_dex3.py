@@ -77,6 +77,21 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
             from profundidade_hibrida import ProfundidadeHibrida
             self._prof = ProfundidadeHibrida(dispositivo="cuda")
             print("🌊 profundidade ao vivo: Depth Anything V2 + estéreo da ZED -> head_depth", flush=True)
+        # 03/11: ATENÇÃO AO VIVO para a cabine do robô (http://<pgx>:8602/atencao.json)
+        self._atn = None
+        if getattr(args, "atencao", 0):
+            from atencao_ao_vivo import AtencaoAoVivo
+            self._atn = AtencaoAoVivo(self.model, getattr(args, "atencao_porta", 8602),
+                                      getattr(args, "passos_fluxo", 4))
+
+    def get_action(self, obs):
+        if self._atn is None:
+            return super().get_action(obs)
+        self._atn.inicia()
+        try:
+            return super().get_action(obs)
+        finally:
+            self._atn.fecha(str(obs.get("instruction", "") or ""))
 
     # chave do executor -> papel do treino, na ORDEM do treino (dados_prometheus_v7.yaml: image_roles)
     PAPEIS = [("observation.images.cam_left_high", "head_left"), ("__profundidade__", "head_depth"),
@@ -121,6 +136,8 @@ class ServidorDex3(srv.ActionServerWBCMsgpack):
                     continue   # a profundidade é calculada na grade 640x480 da ZED ("largo")
                 from profundidade_hibrida import colore
                 Z = self._prof.lote([(esq, dir_)])[0]
+                if self._atn is not None:   # 03/11: nuvem de pontos da cabine (1 a cada 8 pixels, com a cor)
+                    self._atn.prof = (__import__("time").time(), Z[::8, ::8].copy(), esq[::8, ::8].copy())
                 rgb = colore(Z)
                 img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
                 self._grava_prof(esq, rgb, Z)
@@ -291,6 +308,8 @@ def main():
     p.add_argument("--lora_passo", type=int, default=8000)
     p.add_argument("--profundidade", choices=["auto", "sim", "nao"], default="auto",
                    help="head_depth ao vivo (auto = se o run treinou com head_depth); precisa do head_stereo_right")
+    p.add_argument("--atencao", type=int, default=1, help="1 = calcula a atenção do DiT e serve em --atencao-porta")
+    p.add_argument("--atencao-porta", type=int, default=8602)
     p.add_argument("--grava-prof-s", type=float, default=2.0,
                    help="a cada N s salva câmera|profundidade em ~/profundidade_ao_vivo (0 = não grava)")
     a = p.parse_args()
