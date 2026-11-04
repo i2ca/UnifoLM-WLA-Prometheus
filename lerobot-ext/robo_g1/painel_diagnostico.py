@@ -321,6 +321,16 @@ class PoseInicial:
             self.mao.send(json.dumps({"topic": f"rt/dex3/{lado}/cmd", "data": {"motor_cmd": mc}}).encode(),
                           zmq.NOBLOCK)
 
+    @staticmethod
+    def _perto_do_descanso(q0):
+        """Os dois braços perto da pose de descanso (ombro pitch/roll e cotovelo a menos de 0,3 rad)?"""
+        try:
+            p = json.load(open(POSE_ARQ))
+            d = dict(zip(BRACOS, list(p["left_descanso"]) + list(p["right_descanso"])))
+        except Exception:  # noqa: BLE001
+            return False
+        return max(abs(q0[i] - d[i]) for i in (15, 16, 18, 22, 23, 25)) < 0.3
+
     def _vai(self, alvo, tipo):
         try:
             low, _ = D.pega("low")
@@ -330,6 +340,33 @@ class PoseInicial:
             dur = max(4.0, maior / 0.25)
             print(f"[diagnóstico] pose inicial ({tipo}): até {maior:.2f} rad, em {dur:.0f} s", flush=True)
             q = dict(q0)
+            # 03/11: SAINDO DO DESCANSO (braços baixados, mão fechada junto da coxa): abrir a mão ali batia os dedos na
+            # quina da perna. Então: 1) AFASTA de mão fechada (ombro para fora e um pouco para a frente), 2) ABRE a mão
+            # parada longe da perna, 3) só então vai para a pose. Vale para qualquer pose que não seja o próprio descanso.
+            if tipo != "descanso" and self._perto_do_descanso(q0):
+                afasta = dict(q0)
+                for i, d in ((15, -AFASTA_PITCH), (16, +AFASTA_ROLL), (22, -AFASTA_PITCH), (23, -AFASTA_ROLL)):
+                    afasta[i] = q0[i] + d                 # pitch negativo = para a frente; roll para FORA do corpo
+                print("[diagnóstico] saindo do descanso: afasta as mãos das pernas de mão fechada, abre, e só então sobe", flush=True)
+                for fase, (de, para, dur_f, mao_fechada) in enumerate(((q0, afasta, 1.5, True), (afasta, afasta, 1.0, False))):
+                    t0 = time.time()
+                    while time.time() - t0 < dur_f:
+                        pan, idade_p = D.pega("panico")
+                        _, idade_l = D.pega("low")
+                        if pan is None or idade_p > 1.0 or pan.get("panico") or idade_l > 0.3:
+                            self.estado = "INTERROMPIDA (pânico, ponte ou estado sumiu) — a ponte segura o braço"
+                            return
+                        u = min(1.0, (time.time() - t0) / dur_f)
+                        s_ = 0.5 - 0.5 * np.cos(np.pi * u)
+                        for i in alvo:
+                            q[i] = de[i] + s_ * (para[i] - de[i])
+                        self._envia(q, mm)
+                        self._abre_maos(fecha=mao_fechada)
+                        self.estado = "afastando as mãos das pernas" if fase == 0 else "abrindo as mãos (longe das pernas)"
+                        time.sleep(0.02)
+                q0 = dict(afasta)                          # a pose sai daqui
+                maior = max(abs(alvo[i] - q0[i]) for i in alvo)
+                dur = max(4.0, maior / 0.25)
             # pose de DESCANSO (06/10): fecha o PUNHO primeiro, com o braço parado, e vai de mão fechada
             fecha = tipo == "descanso"
             t_mao = 1.5 if fecha else 0.0
@@ -389,6 +426,8 @@ class PoseInicial:
 
 
 JUNTAS_SOLTAS = {20}         # punho esquerdo (pitch) com defeito: sem força
+AFASTA_ROLL = 0.20          # 03/11: rad, ombro para FORA ao sair do descanso (antes de abrir a mão)
+AFASTA_PITCH = 0.20         # rad, ombro para a FRENTE, idem
 ENDIREITA_CINTURA_S = 0.0   # s de integrador na cintura antes de travar a ponte (0 = não)
 
 
@@ -513,6 +552,150 @@ PAGINA = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "painel_d
     if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "painel_diagnostico.html")) else b""
 
 
+class Lidar:
+    """03/11: a nuvem crua do lidar da cabeça (lidar_servidor.py, porta 5558), os últimos ~0,4 s, para a vista ao vivo.
+    O MID-360 está de cabeça para baixo no G1: aqui y e z são trocados de sinal (fica de pé: x frente, y esquerda, z cima)."""
+
+    def __init__(self, ctx, porta=5558, janela=0.4):
+        self.lotes, self.trava, self.janela, self.taxa, self.t = [], threading.Lock(), janela, 0.0, 0.0
+        s = ctx.socket(zmq.SUB)
+        s.setsockopt_string(zmq.SUBSCRIBE, "")
+        s.setsockopt(zmq.RCVHWM, 4)
+        s.connect(f"tcp://127.0.0.1:{porta}")
+        threading.Thread(target=self._laco, args=(s,), daemon=True, name="lidar").start()
+
+    def _laco(self, s):
+        n, t0 = 0, time.time()
+        while True:
+            try:
+                _, b = s.recv_multipart()
+                P = np.frombuffer(b, np.float32).reshape(-1, 4)[:, :3] * np.float32([1, -1, -1])
+                agora = time.time()
+                with self.trava:
+                    self.lotes = [x for x in self.lotes if agora - x[0] < self.janela] + [(agora, P)]
+                self.t, n = agora, n + len(P)
+                if agora - t0 > 2:
+                    self.taxa, n, t0 = n / (agora - t0), 0, agora
+            except Exception:  # noqa: BLE001
+                time.sleep(0.05)
+
+    def json(self, maximo=7000):
+        with self.trava:
+            P = np.concatenate([x[1] for x in self.lotes]) if self.lotes else np.zeros((0, 3), np.float32)
+        if len(P) > maximo:
+            P = P[np.random.default_rng().choice(len(P), maximo, replace=False)]
+        vivo = time.time() - self.t < 1.0
+        return {"vivo": vivo, "pontos_s": round(self.taxa) if vivo else 0, "n": int(len(P)),
+                "cm": np.clip(np.round(P * 100), -32000, 32000).astype(int).ravel().tolist()}
+
+
+# 03/11: TESTE DE PRESSÃO da Dex3 — fechar/abrir a mão pela página (pela ponte, porta 6003, como o executor) e gravar
+# a pressão das 9 almofadas x 12 canais (+ juntas e torque dos dedos) para ver o momento em que a caneca apoia na mesa.
+# Dex3, ordem do SDK (a mesma do roda_wla_real.py): 80% da mão em repouso medida = toda fechada.
+MAO_FECHADA = {"left": 0.8 * np.array([0.0, 0.95, 1.57, -1.56, -1.71, -1.52, -1.78]),
+               "right": 0.8 * np.array([0.0, -1.0, -1.65, 1.54, 1.72, 1.54, 1.69])}
+TOPICO_MAO = {"left": "rt/dex3/left/cmd", "right": "rt/dex3/right/cmd"}
+VALIDO = 50000   # canais com 30000 = sem sensor; o resto ~101 kPa (pressão do ar) + o toque
+
+
+class TestePressao:
+    def __init__(self, ctx):
+        self.sock = ctx.socket(zmq.PUSH)
+        self.sock.setsockopt(zmq.LINGER, 0)
+        self.sock.setsockopt(zmq.SNDHWM, 2)
+        self.sock.connect("tcp://127.0.0.1:6003")
+        self.alvo = {}            # lado -> fechamento 0..1 (mandado a 20 Hz enquanto estiver aqui)
+        self.zero = {}            # lado -> (9, 12) pressão de repouso
+        self.grav = None          # {"fim": t, "linhas": [...], "arq": ...}
+        self.ultimo_arq = None
+        threading.Thread(target=self._laco, daemon=True, name="teste_pressao").start()
+
+    @staticmethod
+    def pressao(lado):
+        h, _ = D.pega(lado)
+        if h is None:
+            return None, None
+        P = np.array([list(p.pressure) for p in h.press_sensor_state], float)
+        return P, h
+
+    def mao(self, lado, fecha):
+        if fecha is None:
+            self.alvo.pop(lado, None)
+        else:
+            self.alvo[lado] = float(np.clip(fecha, 0.0, 1.0))
+
+    zerado_a_mao = False
+
+    def zera(self):
+        self.zerado_a_mao = True
+        for lado in ("left", "right"):
+            P, _ = self.pressao(lado)
+            if P is not None:
+                self.zero[lado] = P.copy()
+
+    def grava(self, segundos):
+        if not self.zero:
+            self.zera()
+        pasta = os.path.expanduser("~/testes_pressao")
+        os.makedirs(pasta, exist_ok=True)
+        self.grav = {"fim": time.time() + segundos, "linhas": [], "arq": os.path.join(pasta, time.strftime("%Y%m%d_%H%M%S") + ".npz")}
+
+    def _laco(self):
+        while True:
+            t0 = time.time()
+            for lado, c in list(self.alvo.items()):
+                q = c * MAO_FECHADA[lado]
+                mc = [{"mode": (k & 0x0F) | (0x01 << 4), "q": float(q[k]), "dq": 0.0, "kp": 1.0, "kd": 0.2, "tau": 0.0} for k in range(7)]
+                try:
+                    self.sock.send(json.dumps({"topic": TOPICO_MAO[lado], "data": {"motor_cmd": mc}}).encode(), zmq.NOBLOCK)
+                except zmq.Again:
+                    pass
+            g = self.grav
+            if g is not None:
+                lin = {"t": time.time()}
+                for lado in ("left", "right"):
+                    P, h = self.pressao(lado)
+                    if P is not None:
+                        lin[f"p_{lado}"] = P
+                        lin[f"q_{lado}"] = [h.motor_state[k].q for k in range(7)]
+                        lin[f"tau_{lado}"] = [h.motor_state[k].tau_est for k in range(7)]
+                g["linhas"].append(lin)
+                if time.time() >= g["fim"]:
+                    self._salva(g)
+                    self.grav = None
+            time.sleep(max(0.0, 0.02 - (time.time() - t0)))   # 50 Hz
+
+    def _salva(self, g):
+        L = g["linhas"]
+        out = {"t": np.array([x["t"] for x in L])}
+        for k in ("p_left", "p_right", "q_left", "q_right", "tau_left", "tau_right"):
+            if all(k in x for x in L):
+                out[k] = np.array([x[k] for x in L], float)
+        for lado, z in self.zero.items():
+            out[f"zero_{lado}"] = z
+        np.savez_compressed(g["arq"], **out)
+        self.ultimo_arq = g["arq"]
+        print(f"[diagnóstico] pressão gravada: {g['arq']} ({len(L)} amostras)", flush=True)
+
+    def resumo(self):
+        r = {"segurando": self.alvo, "gravando": None if self.grav is None else round(self.grav["fim"] - time.time(), 1),
+             "ultimo_arq": self.ultimo_arq, "zerado": self.zerado_a_mao, "maos": {}}
+        for lado in ("left", "right"):
+            P, _ = self.pressao(lado)
+            if P is None:
+                continue
+            if lado not in self.zero:   # 03/11: sem "zerar", a referência é a 1ª leitura (antes dava sempre 0)
+                self.zero[lado] = P.copy()
+            z = self.zero[lado]
+            ok = (P > VALIDO) & (z > VALIDO)
+            d = np.where(ok, P - z, 0.0) / 1000.0                      # kPa acima do repouso
+            cru = P[P > VALIDO]
+            r["maos"][lado] = {"almofadas_kpa": np.round(d.sum(1), 2).tolist(), "total_kpa": round(float(d.sum()), 2),
+                               "max_kpa": round(float(d.max()), 2), "canais": int(ok.sum()),
+                               "cru_max_kpa": round(float(cru.max()) / 1000, 2) if len(cru) else None}
+        return r
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--porta", type=int, default=8095)
@@ -524,12 +707,14 @@ def main():
     threading.Thread(target=assina_json, args=(ctx, 6007, "panico"), daemon=True).start()
     threading.Thread(target=assina_json, args=(ctx, 6004, "modo"), daemon=True).start()
     cams = {"p5555": Camera(ctx, 5555), "p5556": Camera(ctx, 5556)}
+    lidar = Lidar(ctx)
     pedido = ctx.socket(zmq.PUSH)
     pedido.setsockopt(zmq.LINGER, 0)
     pedido.setsockopt(zmq.SNDHWM, 1)
     pedido.connect("tcp://127.0.0.1:6006")
     global POSE, VOZ
     POSE = PoseInicial(ctx)
+    teste = TestePressao(ctx)
     VOZ = Voz()
     cache = {"t": 0.0, "json": b"{}"}
     trava_cache = threading.Lock()
@@ -560,6 +745,15 @@ def main():
                         cache["t"] = time.time()
                     corpo = cache["json"]
                 return self._manda(corpo, "application/json")
+            if caminho.startswith("/static/"):   # 03/11: three.js local (a rede do robô não tem internet)
+                arq = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", os.path.basename(caminho))
+                if not os.path.isfile(arq):
+                    return self._manda(b"nao achei", "text/plain", 404)
+                return self._manda(open(arq, "rb").read(), "text/javascript")
+            if caminho == "/pressao.json":   # 03/11: o teste de pressão da Dex3
+                return self._manda(json.dumps(teste.resumo()).encode(), "application/json")
+            if caminho == "/lidar.json":   # 03/11: a nuvem crua do lidar, ao vivo
+                return self._manda(json.dumps(lidar.json()).encode(), "application/json")
             if caminho.startswith("/cam/") and caminho.endswith(".jpg"):
                 porta, _, nome = caminho[5:-4].partition(".")
                 c = cams.get(porta)
@@ -585,6 +779,20 @@ def main():
                 msg = POSE.comeca(tipo)
                 print(f"[diagnóstico] botão pose inicial ({tipo}): {msg}", flush=True)
                 return self._manda(json.dumps({"ok": msg == "indo", "msg": msg}).encode(), "application/json")
+            elif self.path.startswith(("/mao", "/zera_pressao", "/grava_pressao")):   # 03/11: teste de pressão
+                import urllib.parse
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                if self.path.startswith("/mao"):
+                    lado = q.get("lado", ["right"])[0]
+                    f = q.get("fecha", [""])[0]
+                    if lado in MAO_FECHADA:
+                        teste.mao(lado, None if f in ("", "solta") else float(f))
+                        print(f"[diagnóstico] mão {lado}: {'solta (para de mandar)' if f in ('', 'solta') else f'fecha {f}'}", flush=True)
+                elif self.path.startswith("/zera_pressao"):
+                    teste.zera()
+                else:
+                    teste.grava(min(60.0, float(q.get("s", ["20"])[0])))
+                return self._manda(json.dumps(teste.resumo()).encode(), "application/json")
             elif self.path.startswith("/led"):   # 28/10: /led?r=0&g=120&b=255 — a luz do rosto
                 import urllib.parse
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

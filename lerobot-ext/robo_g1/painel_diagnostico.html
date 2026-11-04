@@ -64,6 +64,31 @@ tr.grupo td{background:#20252f;color:var(--apagado);font-size:11px;text-transfor
   <section class="largo"><h2>Câmeras <span id="camInfo"></span></h2>
     <div id="camServ" style="padding:6px 12px;color:var(--apagado);border-bottom:1px solid var(--borda)"></div>
     <div class="cams" id="cams"></div></section>
+  <section class="largo"><h2>Teste de pressão da Dex3 <span id="presInfo"></span></h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;padding:8px 12px;align-items:center">
+      <b style="color:var(--apagado)">mão direita:</b>
+      <button onclick="mao('right', 0.4)">fechar 40%</button><button onclick="mao('right', 0.6)">fechar 60%</button>
+      <button onclick="mao('right', 0.8)">fechar 80%</button><button onclick="mao('right', 0)">abrir</button>
+      <button onclick="mao('right', 'solta')" title="para de mandar comando (o executor volta a mandar)">soltar controle</button>
+      <span style="width:16px"></span><b style="color:var(--apagado)">esquerda:</b>
+      <button onclick="mao('left', 0.6)">fechar 60%</button><button onclick="mao('left', 0)">abrir</button>
+      <button onclick="mao('left', 'solta')">soltar controle</button>
+      <span style="width:16px"></span>
+      <button onclick="presPost('zera_pressao')" title="com as mãos abertas e soltas">zerar (mão aberta)</button>
+      <button onclick="presPost('grava_pressao?s=20')" style="background:#1f6a4f;border-color:#3fb950">gravar 20 s</button>
+    </div>
+    <div style="padding:0 12px 6px;color:var(--apagado)">Só com o executor do WLA PARADO (os dois mandariam na mão). A ponte precisa estar rearmada.
+      Teste: zerar com a mão aberta → fechar 60% → você põe a caneca → gravar 20 s → leva até encostar na mesa → solta.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 12px 12px">
+      <div><div style="color:var(--apagado)">direita — kPa acima do repouso, por almofada</div><canvas id="presD" width="600" height="150" style="width:100%;background:#0a0c10;border-radius:6px"></canvas></div>
+      <div><div style="color:var(--apagado)">esquerda</div><canvas id="presE" width="600" height="150" style="width:100%;background:#0a0c10;border-radius:6px"></canvas></div>
+    </div></section>
+  <section class="largo"><h2>Lidar ao vivo (MID-360 da cabeça) <span id="lidInfo"></span></h2>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;padding:8px 12px;align-items:center;color:var(--apagado)">
+      <span>arraste p/ girar · roda p/ zoom · botão direito p/ arrastar</span>
+      <label><input type="checkbox" id="lidAcum"> acumular 2 s</label>
+      <span>cor = altura (azul chão → vermelho alto) · grade = chão · seta = frente do robô</span></div>
+    <div id="lid3d" style="margin:0 12px 12px;border-radius:6px;overflow:hidden;background:#0a0c10"></div></section>
   <section class="largo"><h2>Corpo — 29 juntas <span id="corpoInfo"></span></h2>
     <div class="rola"><table><thead><tr><th>junta</th><th>#</th><th>q (rad)</th><th>q (°)</th><th>dq (rad/s)</th>
     <th>τ (Nm)</th><th>temp 1 (°C)</th><th>temp 2 (°C)</th><th>tensão (V)</th><th>erro</th></tr></thead>
@@ -231,4 +256,71 @@ async function tique() {
   setTimeout(tique, 250);
 }
 tique();
+// 03/11: teste de pressão
+async function mao(lado, f) { await fetch(`mao?lado=${lado}&fecha=${f}`, {method: 'POST'}); }
+async function presPost(c) { await fetch(c, {method: 'POST'}); }
+const presHist = {left: [], right: []};
+function barras(cv, m, hist) {
+  const c = cv.getContext('2d'), W = cv.width, H = cv.height; c.fillStyle = '#0a0c10'; c.fillRect(0, 0, W, H);
+  if (!m) { c.fillStyle = '#5d6680'; c.fillText('sem dados da mão', 10, 20); return; }
+  const A = m.almofadas_kpa, esc = Math.max(5, ...A.map(Math.abs)) * 1.1, bw = W * 0.5 / A.length;
+  A.forEach((v, i) => { const h = Math.abs(v) / esc * (H - 24); c.fillStyle = v >= 0 ? '#3fb950' : '#58a6ff';
+    c.fillRect(8 + i * bw, H - 12 - h, bw - 4, h); c.fillStyle = '#8b93a1'; c.font = '10px system-ui'; c.fillText(i + 1, 10 + i * bw, H - 1); });
+  hist.push(m.total_kpa); if (hist.length > 150) hist.shift();
+  const x0 = W * 0.52, w = W * 0.46, mx = Math.max(5, ...hist.map(Math.abs)) * 1.1;
+  c.strokeStyle = '#e3b341'; c.beginPath(); hist.forEach((v, i) => { const x = x0 + i / 150 * w, y = H / 2 - v / mx * (H / 2 - 10); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke();
+  c.fillStyle = '#e4e6eb'; c.font = '12px system-ui'; c.fillText(`total ${m.total_kpa.toFixed(1)} kPa · máx ${m.max_kpa.toFixed(1)} · ${m.canais} canais · cru ${m.cru_max_kpa} kPa`, x0, 14);
+}
+async function pressao() {
+  try {
+    const r = await (await fetch('pressao.json', {cache: 'no-store'})).json();
+    barras($('presD'), r.maos.right, presHist.right); barras($('presE'), r.maos.left, presHist.left);
+    const seg = Object.entries(r.segurando).map(([l, v]) => `${l === 'right' ? 'dir.' : 'esq.'} ${Math.round(v * 100)}%`).join(', ');
+    $('presInfo').textContent = (r.zerado ? '' : 'referência = 1ª leitura (aperte zerar com a mão aberta) · ') + (seg ? `segurando: ${seg} · ` : '') +
+      (r.gravando != null ? `● gravando, faltam ${r.gravando} s` : r.ultimo_arq ? `última gravação: ${r.ultimo_arq}` : '');
+  } catch (_) {}
+  setTimeout(pressao, 200);
+}
+pressao();
+</script>
+<script type="importmap">{ "imports": { "three": "./static/three.module.min.js" } }</script>
+<script type="module">
+// 03/11: o LIDAR ao vivo em 3D (só a nuvem crua, sem mapa) — /lidar.json a ~8 Hz. Referencial do lidar de pé
+// (x frente, y esquerda, z cima; o painel já desvira o MID-360, que está de cabeça para baixo).
+import * as THREE from 'three';
+import { OrbitControls } from './static/OrbitControls.js';
+const $ = id => document.getElementById(id), caixa = $('lid3d');
+const cena = new THREE.Scene(), cam = new THREE.PerspectiveCamera(55, 16 / 9, 0.02, 60);
+cam.up.set(0, 0, 1); cam.position.set(-2.2, -1.6, 1.4);
+const rend = new THREE.WebGLRenderer({antialias: true}); rend.setPixelRatio(devicePixelRatio); rend.setClearColor(0x0a0c10);
+caixa.appendChild(rend.domElement);
+const ctrl = new OrbitControls(cam, rend.domElement); ctrl.target.set(0.8, 0, -0.6); ctrl.enableDamping = true; ctrl.update();
+const grade = new THREE.GridHelper(8, 32, 0x34405a, 0x1d2433); grade.rotation.x = Math.PI / 2; grade.position.z = -1.2; cena.add(grade);
+cena.add(new THREE.AxesHelper(0.2));
+cena.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), 0.5, 0xe4e6eb, 0.1, 0.06));
+const cabeca = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 14), new THREE.MeshBasicMaterial({color: 0xe4e6eb})); cena.add(cabeca);
+const geo = new THREE.BufferGeometry(), nuvem = new THREE.Points(geo, new THREE.PointsMaterial({size: 0.018, vertexColors: true}));
+nuvem.frustumCulled = false; cena.add(nuvem);
+function tamanho() { const w = caixa.clientWidth || 800, h = Math.round(Math.min(w * 0.56, 620)); rend.setSize(w, h); cam.aspect = w / h; cam.updateProjectionMatrix(); }
+tamanho(); new ResizeObserver(tamanho).observe(caixa);
+(function anima() { requestAnimationFrame(anima); ctrl.update(); rend.render(cena, cam); })();
+const hist = [], cor = new THREE.Color();
+async function lidar() {
+  try {
+    const L = await (await fetch('lidar.json', {cache: 'no-store'})).json();
+    hist.push([performance.now(), L.cm]);
+    const janela = $('lidAcum').checked ? 2000 : 0;
+    while (hist.length > 1 && performance.now() - hist[0][0] > janela) hist.shift();
+    let n = 0; for (const [, c] of hist) n += c.length / 3;
+    const pos = new Float32Array(3 * n), col = new Float32Array(3 * n); let k = 0;
+    for (const [, c] of hist) for (let i = 0; i < c.length; i += 3, k++) {
+      const z = c[i + 2] / 100; pos[3 * k] = c[i] / 100; pos[3 * k + 1] = c[i + 1] / 100; pos[3 * k + 2] = z;
+      cor.setHSL(0.66 - 0.66 * Math.min(1, Math.max(0, (z + 1.3) / 1.8)), 0.85, 0.55); col[3 * k] = cor.r; col[3 * k + 1] = cor.g; col[3 * k + 2] = cor.b;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    $('lidInfo').textContent = L.vivo ? `${Math.round(L.pontos_s / 1000)} mil pontos/s · ${n} na tela` : 'sem pontos (lidar_servidor.py no init?)';
+  } catch (_) { $('lidInfo').textContent = 'sem resposta'; }
+  setTimeout(lidar, 120);
+}
+lidar();
 </script></body></html>
