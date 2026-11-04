@@ -1,0 +1,271 @@
+# 31/10 V8: os 3 nossos (os mesmos do v7) + 7 datasets G1+Dex3 de TERCEIROS (converte_terceiros_wla.py), uma entrada
+# por câmera de cabeça (cada entrada lê UMA chave de vídeo). Pastas T8_* = links. Só a cabeça: punhos e profundidade
+# ficam com máscara desligada nos terceiros. Mistura por entrada: trainer.v2.fontes (o weight daqui é ignorado).
+target_fps: 30
+chunk_size: 30
+image_size: [336, 448]
+norm_type: "minmax_q"
+rel_norm_type: "zscore"
+state_norm_type: "minmax_q"
+gripper_norm_type: "minmax_q"
+data_base: "/home/mrwlker/unifolm_data"   # TROQUE: pasta com os datasets convertidos na máquina de treino
+cache_dir: "/data/mrwlker/unifolm_cache_v8"
+
+image_roles:
+  - "head_left"
+  - "head_depth"              # [NOVO] profundidade da ZED (vídeo gerado offline)
+  - "cam_wrist_left"
+  - "cam_wrist_right"
+
+datasets:
+  - name: "Prometheus_G1_Dex3"
+    data_path: "Prometheus_G1_Dex3_V7/"   # links: só os 3 com DEDOS MEDIDOS
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"   # as da UNITREE (o base aprendeu com elas): não recalcular
+    image_keys:
+      - key: "observation.images.head_stereo_left"
+        role: "head_left"
+      - key: "observation.images.head_depth"   # [NOVO]
+        role: "head_depth"
+      - key: "observation.images.wrist_left"
+        role: "cam_wrist_left"
+      - key: "observation.images.wrist_right"
+        role: "cam_wrist_right"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+
+  # PickVeggis (605 eps, 4 frutas -> bandeja) + botão vermelho (42)
+  - name: "T8_cam_left_high"
+    data_path: "T8_cam_left_high/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.cam_left_high"
+        role: "head_left"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+
+  # chaleira azul do Breno (83 + 30 eps)
+  - name: "T8_cam_rgb_high"
+    data_path: "T8_cam_rgb_high/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.cam_rgb_high"
+        role: "head_left"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+
+  # caneca branca do lewislf (238 eps, só o braço direito)
+  - name: "T8_head_camera"
+    data_path: "T8_head_camera/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.head_camera"
+        role: "head_left"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+
+  # cubo verde -> caixa azul (124 eps, pose da mão pronta, garra)
+  - name: "T8_cam_head"
+    data_path: "T8_cam_head/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 30
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.cam_head"
+        role: "head_left"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+
+  # polvos rosa/azul -> cestas (830 eps, 20 fps)
+  - name: "T8_ego_view"
+    data_path: "T8_ego_view/"
+    enabled: true
+    weight: 1.0
+    robot_type: "unitree"
+    source_fps: 20
+    arm_type: "dual_with_legs"
+    ee_format: "xyz_rpy"
+    multi_task: true
+    merge_left_right_ee_stats: true
+    precollected_stats_path: "unifolm_wla/dataloader/multi_source_dataset/stats"
+    image_keys:
+      - key: "observation.images.ego_view"
+        role: "head_left"
+    action_keys:
+      left_ee_pose: "action.left_ee_pose_gripper_base"
+      right_ee_pose: "action.right_ee_pose_gripper_base"
+      left_fig6d: "action.left_fig6d"
+      right_fig6d: "action.right_fig6d"
+      waist_joint: "action.waist_action_joint"
+      base_command: "action.base_command"
+      left_leg: "action.left_leg"
+      right_leg: "action.right_leg"
+    state_keys:
+      left_ee_pose: "observation.state.left_ee_pose_gripper_base"
+      right_ee_pose: "observation.state.right_ee_pose_gripper_base"
+      left_fig6d: "observation.state.left_fig6d"
+      right_fig6d: "observation.state.right_fig6d"
+      waist_joint: "observation.state.waist_state_joint"
+      left_leg: "observation.state.left_leg"
+      right_leg: "observation.state.right_leg"
+    relative_stats_key_map:
+      left_ee_pose: "left_ee_pose_gripper_base"
+      right_ee_pose: "right_ee_pose_gripper_base"
+    base_command_dims:
+      vx: 0
+      vy: 1
+      vw: 2
+      height: 3
+

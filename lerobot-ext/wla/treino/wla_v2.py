@@ -29,6 +29,10 @@ PESOS_PADRAO = {
 
 
 PARTE_FORCADA = None
+# v8 (31/10): por ENTRADA da config de dados: {nome: {"alfa": a, "repete": k}} — alfa = equilíbrio entre as pastas
+# daquela entrada (1 = todas iguais, 0,5 = raiz), repete = quantas vezes a entrada inteira entra na época (o carregador
+# mistura as entradas pelo TAMANHO e ignora o weight do yaml; é assim que os nossos dados chegam a ~50%)
+FONTES = {}
 
 
 def instala_split(caminho, parte):
@@ -216,6 +220,21 @@ def desliga_cameras(item, c):
     imgs, mask = item["images"], item.setdefault("image_mask", {})
     sorteio, fora = random.random(), ()
     p1, p2, p3 = c.get("punhos", 0.0), c.get("um_punho", 0.0), c.get("cabeca", 0.0)
+    p4, p5 = c.get("todas_pretas", 0.0), c.get("escura", 0.0)
+    if p1 + p2 + p3 + p4 <= sorteio < p1 + p2 + p3 + p4 + p5:
+        # v8 (31/10): imagem ESCURA (3-25% do brilho + ruído de sensor): sobra um vestígio da cena; o resto vem das juntas
+        f = random.uniform(*c.get("escura_brilho", [0.03, 0.25]))
+        for r in imgs:
+            if mask.get(r, True) and r != "head_depth":   # a profundidade não "escurece"
+                x = imgs[r]
+                imgs[r] = (x * f + torch.randn_like(x) * 0.02 * (x.max() if x.max() > 1.5 else 1.0)).clamp(min=0)
+        return item
+    if p1 + p2 + p3 <= sorteio < p1 + p2 + p3 + p4:
+        # v8 (31/10): TODAS pretas, máscara LIGADA (o prompt fica igual; a imagem não diz nada) -> só estado + frase
+        for r in imgs:
+            if mask.get(r, True):
+                imgs[r] = torch.zeros_like(imgs[r])
+        return item
     if sorteio < p1:
         fora = PUNHOS
     elif sorteio < p1 + p2:
@@ -229,6 +248,25 @@ def desliga_cameras(item, c):
         if r in imgs:
             imgs[r] = torch.zeros_like(imgs[r])
             mask[r] = False
+    return item
+
+
+def reamostra_acao(item, alvo=30):
+    """v8 (31/10): dataset a 20 fps (polvos) sai com 20 passos de ação; o carregador da Unitree tem
+    fps_utils.resample_action_chunk mas não o chama. Interpola no tempo (linear, como a função deles) até `alvo`."""
+    a = item.get("action")
+    if a is None or a.shape[0] == alvo:
+        return item
+    n = a.shape[0]
+    t_src = torch.linspace(0.0, (n - 1) / n, n)
+    t_alvo = torch.linspace(0.0, (alvo - 1) / alvo, alvo).clamp(max=float(t_src[-1]))
+    k = torch.searchsorted(t_src, t_alvo, right=True).clamp(1, n - 1)
+    w = ((t_alvo - t_src[k - 1]) / (t_src[k] - t_src[k - 1])).unsqueeze(-1)
+    item["action"] = (a[k - 1] * (1 - w) + a[k] * w).to(a.dtype)
+    for chave in ("action_mask", "action_is_pad"):   # máscaras por passo de tempo, se vierem assim
+        m = item.get(chave)
+        if m is not None and getattr(m, "shape", (0,))[0] == n:
+            item[chave] = m[k]
     return item
 
 
@@ -283,9 +321,33 @@ class Balanceado(torch.utils.data.Dataset):
         item["marcador"] = torch.tensor([x, y])
         return item
 
+    def congela(self, item, j):
+        """v8 (31/10): as imagens de um quadro ATRASADO (trainer.v2.desliga_camera.congelada_s, padrão 0,3-1,5 s) do
+        MESMO episódio; estado e ação seguem no tempo atual -> onde o braço está AGORA só as juntas dizem."""
+        try:
+            ss = self.ds
+            k, loc = ss._route_index(j)
+            sub = ss._datasets[k]
+            a_, b_ = self.desliga.get("congelada_s", [0.3, 1.5])
+            d = max(1, int(random.uniform(a_, b_) * ss.source_fps))
+            if loc - d < 0:
+                return item
+            hf = sub.hf_dataset
+            if int(hf[loc - d]["episode_index"]) != int(hf[loc]["episode_index"]):
+                return item
+            velhas, mvelha = ss._process_images(sub[loc - d])
+            for r, img in velhas.items():
+                if item["image_mask"].get(r) and mvelha.get(r):
+                    item["images"][r] = img
+        except Exception as e:  # noqa: BLE001  (aumento: nunca derruba o treino)
+            if random.random() < 0.001:
+                print(f"⚠️ congela: {e!r}", flush=True)
+        return item
+
     def __getitem__(self, i):
         j = int(self.mapa[i])
         item = self.ds[j]
+        item = reamostra_acao(item)
         if self.frases and item.get("task") in self.frases:
             v = self.frases[item["task"]]
             item["task"] = random.choice(v) if isinstance(v, (list, tuple)) else v   # lista = variações sorteadas
@@ -294,6 +356,8 @@ class Balanceado(torch.utils.data.Dataset):
             item.pop("cabeca_limpa", None)
         if self.treino and self.texto_vazio > 0 and random.random() < self.texto_vazio:
             item["task"] = ""
+        if self.treino and self.desliga and random.random() < float(self.desliga.get("congelada", 0.0)):
+            item = self.congela(item, j)
         if self.treino and self.aumento:
             item = aumenta_imagens(item, self.aumento)
         if self.treino and self.desliga:
@@ -335,16 +399,25 @@ def instala_balanceamento(alfa=1.0, frases=None, marcadores=None, texto_vazio=0.
 
     def cria(*args, **kw):
         ds = orig(*args, **kw)
+        fonte = FONTES.get(getattr(getattr(ds, "config", None), "name", ""), {})
+        a_ = float(fonte.get("alfa", alfa))
         tam = [len(d) for d in ds._datasets]
         maior, mapa, ini = max(tam), [], 0
         for td, n in zip(ds._task_dirs, tam):
-            k = (maior / n) ** alfa if alfa > 0 else 1.0
+            k = (maior / n) ** a_ if a_ > 0 else 1.0
             idx = np.arange(ini, ini + n)
             rep = np.concatenate([np.tile(idx, int(k)), idx[: int(round((k - int(k)) * n))]])
             mapa.append(rep)
             print(f"⚖️  {Path(td).name}: {n} quadros x{k:.2f} -> {len(rep)}", flush=True)
             ini += n
-        return Balanceado(ds, np.concatenate(mapa), frases, marcadores, texto_vazio=texto_vazio, distratores=distratores,
+        mapa = np.concatenate(mapa)
+        r_ = float(fonte.get("repete", 1.0))
+        if r_ != 1.0:
+            sorteio = np.random.default_rng(0).permutation(mapa)   # a fração é SORTEADA (não os 1ºs episódios)
+            mapa = np.concatenate([np.tile(mapa, int(r_)), sorteio[: int(round((r_ - int(r_)) * len(mapa)))]])
+        print(f"⚖️  ENTRADA {getattr(ds.config, 'name', '?')}: {len(mapa)} amostras por época (alfa {a_}, repete {r_})",
+              flush=True)
+        return Balanceado(ds, mapa, frases, marcadores, texto_vazio=texto_vazio, distratores=distratores,
                           aumento=aumento, desliga=desliga)
 
     DL.create_single_source_dataset = cria
