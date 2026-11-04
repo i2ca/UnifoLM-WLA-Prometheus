@@ -1,6 +1,7 @@
-# GRAVAÇÃO PARA O ER-1 (04/11) — a chaleira LIGADA até DESLIGAR SOZINHA (a água ferveu): o robô PARADO olhando.
-# NÃO é para treinar o WLA: é para o ER-1 aprender a ver a LUZ VERMELHA da chaleira (pequena) — "acendeu?",
-# "ainda está esquentando?", "apagou (ferveu)?" — e avisar o WLA / o orquestrador quando passar para a próxima etapa.
+# GRAVAÇÃO PARA O ER-1 (04/11) — ACHAR a luz vermelha da chaleira e ver se ela MUDOU (acendeu / apagou).
+# NÃO é para treinar o WLA. A luz é pequena (2-3 px na cabeça): o ER-1 vai 1) APONTAR onde a luz fica, 2) olhar um
+# recorte ampliado ali e 3) COMPARAR com o recorte de antes -> "mudou?". Os rótulos saem dos próprios quadros
+# (a diferença vermelha entre "apagada" e "acesa" no mesmo episódio dá ONDE está a luz e QUANDO mudou).
 #
 # Frase (só para o registro): "Wait until the electric kettle turns off."
 #
@@ -8,15 +9,18 @@
 #   conda activate prometheus-vla
 #   python init_lerobot_record_v2.py --config_path=config/record/record_vr_cafe_chaleira_espera_er1.yaml
 #
-# ÁGUA: com água (o suficiente para uma xícara: ferve em poucos minutos). NUNCA vazia.
-# O EPISÓDIO (uns 2-5 min cada):
-#   1. robô na pose de gravação, a chaleira INTEIRA na imagem da cabeça, luz APAGADA; aperte A (começa)
-#   2. ~5 s com a luz apagada; então LIGUE a chaleira (você mesmo, ou pela teleoperação) -> luz ACESA
-#   3. deixe o robô PARADO (sem mexer os braços nem a cabeça) até a chaleira DESLIGAR sozinha -> luz apagada
-#   4. ~5 s com a luz apagada de novo; aperte A (salva)
-# VARIAÇÃO entre episódios: a chaleira em lugares diferentes da mesa, a luz da sala acesa/apagada, alguém passando
-#   na frente às vezes — o ER-1 tem que achar a luz pequena em qualquer canto da imagem.
-# Meta: 6-10 episódios (eu marco depois, quadro a quadro, quando a luz acendeu e quando apagou).
+# ÁGUA: sempre com água (uma xícara ferve em poucos minutos). NUNCA vazia.
+# DOIS TIPOS DE EPISÓDIO (1-2 min cada; alterne):
+#   ACENDER: luz apagada ~5 s -> você liga a chaleira -> luz acesa ~20 s -> A.
+#   APAGAR:  com a chaleira JÁ quente e ligada (luz acesa) ~10 s -> espere desligar sozinha (ou desligue você)
+#            -> luz apagada ~5 s -> A.
+# PARA ELE APRENDER A ACHAR A LUZ EM QUALQUER LUGAR (o mais importante):
+#   - a chaleira em lugares diferentes da mesa e GIRADA (luz de frente, de lado, meio escondida pela alça);
+#   - o ROBÔ olhando de posições diferentes: em parte dos episódios gire a CINTURA DEVAGAR pela teleoperação
+#     (a luz anda pela imagem e muda de tamanho); os braços parados e longe da chaleira;
+#   - a luz da sala acesa/apagada, alguém passando na frente às vezes.
+# NÃO tape a luz com a mão ao ligar/desligar: aperte e tire a mão logo.
+# Meta: ~15-20 episódios (metade ACENDER, metade APAGAR).
 #
 # Controle: A encerra e SALVA (B descarta). Termine com ESC ou a voz "finalizar".
 
