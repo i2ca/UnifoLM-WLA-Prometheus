@@ -14,6 +14,10 @@ Colunas geradas (os NOMES da Unitree, para a normalização pré-calculada dela 
   action.waist_action_joint                  (3)  cintura yaw (comandado), roll, pitch (medidos)
   observation.state.waist_state_joint        (3)  yaw, roll, pitch medidos
   action.base_command                        (4)  vx, vy, vyaw, altura (base.vx/vy/vyaw/height)
+  observation.state.left_pressure / right    (9)  03/11: PRESSÃO da Dex3 por almofada, kPa acima do repouso (o
+                                                  repouso = o 5º percentil de cada canal no episódio, a mão solta);
+                                                  dos 108 canais gravados (9 x 12; 30000 = sem sensor). Gravações
+                                                  antigas (33 canais cortados, ou sem pressão) saem com ZEROS.
   action.left_leg / right  e  observation.state.left_leg / right (6)  pernas medidas (o WBC é quem manda)
   observation.images.head_stereo_left/right, wrist_left, wrist_right   (vídeos copiados como estão)
 
@@ -79,6 +83,26 @@ def nome_mao_nos_dados(nomes_colunas, lado):
     return achou
 
 
+PRESSAO_ALMOFADAS, PRESSAO_CANAIS, PRESSAO_VALIDO = 9, 12, 50000.0
+
+
+def pressao_almofadas(P, episodio):
+    """(n, 108) cru -> (n, 9) kPa acima do repouso por almofada, com o repouso POR EPISÓDIO (5º percentil de cada
+    canal: no começo do 'colocar' a mão já segura a caneca, mas no fim ela abre). Outros tamanhos -> zeros."""
+    n = len(P)
+    out = np.zeros((n, PRESSAO_ALMOFADAS), np.float32)
+    if P is None or P.ndim != 2 or P.shape[1] != PRESSAO_ALMOFADAS * PRESSAO_CANAIS:
+        return out
+    for e in np.unique(episodio):
+        m = episodio == e
+        X = P[m].reshape(-1, PRESSAO_ALMOFADAS, PRESSAO_CANAIS)
+        valido = np.median(X, 0) > PRESSAO_VALIDO                     # (9, 12)
+        base = np.percentile(X, 5, axis=0)
+        d = np.clip((X - base) / 1000.0, 0, None) * valido
+        out[m] = d.sum(2)
+    return out
+
+
 def pose6(fk, q29, lado):
     R, p = fk.pose(q29, lado)
     return np.concatenate([p, Rotation.from_matrix(R).as_euler("xyz")]).astype(np.float32)
@@ -139,6 +163,10 @@ def main():
         for c, k in enumerate(("base.vx", "base.vy", "base.vyaw", "base.height")):
             base[:, c] = A[:, ia[k]] if k in ia else (a.altura if c == 3 else 0.0)
         out["action.base_command"] = list(base)
+        for l in ("left", "right"):   # 03/11: a pressão por almofada (zeros se a gravação não tem os 108 canais)
+            col = f"observation.{l}_hand_pressure"
+            Pr = np.stack(d[col].values).astype(np.float64) if col in d.columns else None
+            out[f"observation.state.{l}_pressure"] = list(pressao_almofadas(Pr, d["episode_index"].values))
         out["action.left_leg"] = out["observation.state.left_leg"] = list(qs[:, 0:6].astype(np.float32))
         out["action.right_leg"] = out["observation.state.right_leg"] = list(qs[:, 6:12].astype(np.float32))
         novo = pd.DataFrame({k: v for k, v in out.items()})
@@ -164,6 +192,9 @@ def main():
     feats["action.waist_action_joint"] = {"dtype": "float32", "shape": [3], "names": ["yaw", "roll", "pitch"]}
     feats["observation.state.waist_state_joint"] = {"dtype": "float32", "shape": [3], "names": ["yaw", "roll", "pitch"]}
     feats["action.base_command"] = {"dtype": "float32", "shape": [4], "names": ["vx", "vy", "angle_z", "height"]}
+    for l in ("left", "right"):
+        feats[f"observation.state.{l}_pressure"] = {"dtype": "float32", "shape": [PRESSAO_ALMOFADAS],
+                                                    "names": [f"almofada{i + 1}" for i in range(PRESSAO_ALMOFADAS)]}
     info["features"] = feats
     info["robot_type"] = "unitree_g1_dex3"
     json.dump(info, open(dst / "meta/info.json", "w"), indent=4)

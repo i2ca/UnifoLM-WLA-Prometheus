@@ -20,7 +20,9 @@ import time
 frame_count = 0
 
 # Buffer global de contrabando
-buffer_pressao = {"left": np.zeros(33, dtype=np.float32), "right": np.zeros(33, dtype=np.float32)}
+# 03/11: 108 por mão (9 almofadas x 12 canais) — antes 33, que cortava a mão (ver unitree_g1_dex3.PRESSAO_N)
+PRESSAO_N = 108
+buffer_pressao = {"left": np.zeros(PRESSAO_N, dtype=np.float32), "right": np.zeros(PRESSAO_N, dtype=np.float32)}
 
 try:
     import robot.unitree_g1
@@ -107,10 +109,10 @@ def patched_hw_to_dataset_features(*args, **kwargs):
         dataset_features["observation.state"]["shape"] = (len(new_names),)
 
         dataset_features["observation.left_hand_pressure"] = {
-            "dtype": "float32", "shape": (33,), "names": [f"left_hand_pressure_{i}" for i in range(33)]
+            "dtype": "float32", "shape": (PRESSAO_N,), "names": [f"left_hand_pressure_{i}" for i in range(PRESSAO_N)]
         }
         dataset_features["observation.right_hand_pressure"] = {
-            "dtype": "float32", "shape": (33,), "names": [f"right_hand_pressure_{i}" for i in range(33)]
+            "dtype": "float32", "shape": (PRESSAO_N,), "names": [f"right_hand_pressure_{i}" for i in range(PRESSAO_N)]
         }
 
     # A marcação `video.is_depth_map` da head_camera_depth saiu daqui de propósito.
@@ -143,7 +145,7 @@ def patched_build_dataset_frame(ds_features, values, prefix, *args, **kwargs):
         lp = buffer_pressao["left"]
         rp = buffer_pressao["right"]
 
-        for i in range(33):
+        for i in range(PRESSAO_N):
             values[f"left_hand_pressure_{i}"] = float(lp[i])
             values[f"right_hand_pressure_{i}"] = float(rp[i])
 
